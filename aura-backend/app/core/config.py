@@ -1,0 +1,28 @@
+# app/core/config.py
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    # App
+    app_name: str = "Aura API (Académica)"
+    api_prefix: str = "/api"
+
+    # CORS (para Vite/React en localhost)
+    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    # Mongo
+    mongo_uri: str = "mongodb://localhost:27017"
+    mongo_db: str = "aura_db"
+
+    # OpenAI
+    openai_api_key: str | None = None
+    openai_model_primary: str = "gpt-5-nano"
+    openai_model_fallback: str = "gpt-4o-mini"
+
+    # Ollama
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.1:8b"
+
+    class Config:
+        env_file = ".env"   # carga variables si existe
+
+settings = Settings()

@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
@@ -7,6 +8,7 @@ from pymongo.errors import ServerSelectionTimeoutError
 from dotenv import load_dotenv
 from datetime import datetime
 from openai import OpenAI, BadRequestError
+import requests 
 import os
 
 # ========= App & ENV =========
@@ -36,6 +38,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client_oa = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 OPENAI_MODEL_PRIMARY = "gpt-5-nano"   # intenta primero aquí
 OPENAI_MODEL_FALLBACK = "gpt-4o-mini" # y si falla, usa este
+
+# ========= Ollama (gratuito/local) =========
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
 # ========= Modelos =========
 class Usuario(BaseModel):
@@ -85,6 +91,74 @@ def insert_and_response(collection_name: str, doc: dict):
     return {"message": "ok", "id": str(result.inserted_id), "data": safe_doc}
 
 def generar_respuesta_ia(pregunta: str, contexto: str = "") -> str:
+    """
+    Orden de resolución:
+      1) OpenAI (modelo primario)
+      2) OpenAI (fallback)
+      3) Ollama local (gratis) si no hay OPENAI_API_KEY o si OpenAI falla
+    """
+    system = (
+        "Eres Aura, una IA que apoya a alumnos de la UABCS. "
+        "Responde breve, clara y con pasos accionables cuando aplique. "
+        "Si faltan datos, dilo y sugiere qué falta."
+    )
+    user = f"Contexto:\n{contexto}\n---\nPregunta: {pregunta}"
+
+    def call_openai(model_name: str) -> str:
+        print(f"[IA] OpenAI → {model_name}")
+        resp = client_oa.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user}],
+            temperature=0.2,
+        )
+        out = resp.choices[0].message.content or ""
+        out = out.strip()
+        print(f"[IA] OpenAI OK ({model_name}): {out[:120]}...")
+        return out or "Sin respuesta."
+
+    def call_ollama() -> str:
+        try:
+            print(f"[IA] Ollama → {OLLAMA_MODEL} @ {OLLAMA_URL}")
+            r = requests.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "stream": False,
+                    "options": {"temperature": 0.2},
+                },
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
+            out = ((data.get("message") or {}).get("content") or "").strip()
+            print(f"[IA] Ollama OK: {out[:120]}...")
+            return out or "Sin respuesta."
+        except Exception as e:
+            print(f"[IA] Ollama error: {e.__class__.__name__}: {e}")
+            return "Aura (local): no pude consultar el modelo."
+
+    # --- Ruta de decisión ---
+    if client_oa:
+        try:
+            return call_openai(OPENAI_MODEL_PRIMARY)
+        except BadRequestError as e:
+            print(f"[IA] OpenAI BadRequest({OPENAI_MODEL_PRIMARY}): {e}")
+            try:
+                return call_openai(OPENAI_MODEL_FALLBACK)
+            except Exception as e2:
+                print(f"[IA] Fallback OpenAI falló: {e2.__class__.__name__}: {e2}")
+                return call_ollama()
+        except Exception as e:
+            print(f"[IA] OpenAI error: {e.__class__.__name__}: {e}")
+            return call_ollama()
+    else:
+        # No hay API key → usar Ollama
+        return call_ollama()
     """
     Llama a OpenAI con fallback automático:
       1) gpt-5-nano
