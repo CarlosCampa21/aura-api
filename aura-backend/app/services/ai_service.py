@@ -1,5 +1,6 @@
 # app/services/ai_service.py
 from openai import BadRequestError
+import logging
 from app.core.config import settings
 from app.infrastructure.ai.openai_client import get_openai
 from app.infrastructure.ai.ollama_client import ollama_ask
@@ -49,6 +50,12 @@ def ask_llm(question: str, context: str = "") -> str:
 
     # 3) → Ollama (sin key o error en OpenAI)
     try:
-        return ollama_ask(SYSTEM_PROMPT, user_prompt, temperature=0.2, timeout=30) or "Sin respuesta."
-    except Exception:
+        return ollama_ask(
+            SYSTEM_PROMPT,
+            user_prompt,
+            temperature=0.2,
+            timeout=settings.ollama_timeout_seconds,
+        ) or "Sin respuesta."
+    except Exception as e:
+        logging.getLogger("aura.ai").exception("Ollama fallback failed: %s", e)
         return "Aura (local): no pude consultar el modelo."

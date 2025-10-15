@@ -1,5 +1,9 @@
 # app/core/config.py
 from pydantic_settings import BaseSettings
+from pathlib import Path
+
+# Resolve the .env located at the backend root regardless of CWD
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 class Settings(BaseSettings):
     # App
@@ -21,8 +25,9 @@ class Settings(BaseSettings):
     # Ollama
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
+    ollama_timeout_seconds: int = 120
 
     class Config:
-        env_file = ".env"   # carga variables si existe
+        env_file = str(ENV_FILE)   # carga variables del backend, sin depender del CWD
 
 settings = Settings()

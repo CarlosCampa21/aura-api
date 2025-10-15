@@ -2,7 +2,7 @@
 import requests
 from app.core.config import settings
 
-def ollama_chat(messages: list[dict], temperature: float = 0.2, timeout: int = 30) -> str:
+def ollama_chat(messages: list[dict], temperature: float = 0.2, timeout: int | None = None) -> str:
     """
     Llama al endpoint /api/chat de Ollama.
     messages: [{"role":"system","content":"..."}, {"role":"user","content":"..."}]
@@ -16,14 +16,14 @@ def ollama_chat(messages: list[dict], temperature: float = 0.2, timeout: int = 3
             "stream": False,
             "options": {"temperature": temperature},
         },
-        timeout=timeout,
+        timeout=timeout or settings.ollama_timeout_seconds,
     )
     r.raise_for_status()
     data = r.json()
     return ((data.get("message") or {}).get("content") or "").strip()
 
 
-def ollama_ask(system: str, user: str, temperature: float = 0.2, timeout: int = 30) -> str:
+def ollama_ask(system: str, user: str, temperature: float = 0.2, timeout: int | None = None) -> str:
     """
     Atajo: arma los mensajes system+user y llama a ollama_chat.
     """
@@ -33,5 +33,5 @@ def ollama_ask(system: str, user: str, temperature: float = 0.2, timeout: int = 
             {"role": "user", "content": user},
         ],
         temperature=temperature,
-        timeout=timeout,
+        timeout=timeout or settings.ollama_timeout_seconds,
     )
