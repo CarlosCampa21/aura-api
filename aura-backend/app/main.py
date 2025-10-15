@@ -5,6 +5,7 @@ from app.infrastructure.ai.ollama_client import ollama_ask
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.infrastructure.db.mongo import init_mongo
+from app.infrastructure.db.bootstrap import ensure_collections
 from app.api.router import api_router
 
 app = FastAPI(title=settings.app_name)
@@ -22,6 +23,8 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     init_mongo()
+    # Garantiza colecciones/índices/validadores mínimos
+    ensure_collections()
 
 # Health / Ping
 @app.get("/ping")
