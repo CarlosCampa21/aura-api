@@ -8,18 +8,24 @@ set -euo pipefail
 # - Runs uvicorn pointing to the backend app dir
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKEND_DIR="$ROOT_DIR/AURA/aura-backend"
+BACKEND_DIR="$ROOT_DIR/aura-backend"
 
 if [[ ! -d "$BACKEND_DIR/app" ]]; then
   echo "Backend directory not found at: $BACKEND_DIR" >&2
   exit 1
 fi
 
-# Activate repo venv if available and not already active
-if [[ -z "${VIRTUAL_ENV:-}" && -f "$ROOT_DIR/.venv/bin/activate" ]]; then
-  echo "Activating venv: $ROOT_DIR/.venv"
-  # shellcheck disable=SC1091
-  source "$ROOT_DIR/.venv/bin/activate"
+# Activate venv if available and not already active (prefer local .venv, else parent)
+if [[ -z "${VIRTUAL_ENV:-}" ]]; then
+  if [[ -f "$ROOT_DIR/.venv/bin/activate" ]]; then
+    echo "Activating venv: $ROOT_DIR/.venv"
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/.venv/bin/activate"
+  elif [[ -f "$(dirname "$ROOT_DIR")/.venv/bin/activate" ]]; then
+    echo "Activating venv: $(dirname "$ROOT_DIR")/.venv"
+    # shellcheck disable=SC1091
+    source "$(dirname "$ROOT_DIR")/.venv/bin/activate"
+  fi
 fi
 
 PY="${PYTHON:-python}"

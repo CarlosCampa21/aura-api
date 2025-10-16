@@ -2,7 +2,7 @@
 Seed de datos mínimos para Aura (MongoDB).
 
 Inserta datos de ejemplo en las colecciones:
-- usuarios
+- user
 - materias
 - horarios
 
@@ -11,25 +11,52 @@ Ejecuta desde la raíz del repo con:
 
 O usando Makefile: `make seed`
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict
 from app.infrastructure.db.mongo import init_mongo, get_db
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-USUARIOS: List[Dict] = [
+
+USERS: List[Dict] = [
     {
-        "correo": "jose@example.com",
-        "nombre": "José Mendoza",
-        "carrera": "Ingeniería en Sistemas",
-        "semestre": 3,
-        "created_at": datetime.utcnow().isoformat(),
+        "email": "jose@example.com",
+        "auth_provider": "google",
+        "google_id": "seed-jose-123",
+        "is_active": True,
+        "email_verified": True,
+        "token_version": 0,
+        "profile": {
+            "full_name": "José Mendoza",
+            "student_id": "A01010101",
+            "major": "IDS",
+            "semester": 3,
+            "shift": "TM",
+            "tz": "America/Mazatlan",
+            "preferences": {"language": "es"},
+        },
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
     },
     {
-        "correo": "ana@example.com",
-        "nombre": "Ana Pérez",
-        "carrera": "Administración",
-        "semestre": 5,
-        "created_at": datetime.utcnow().isoformat(),
+        "email": "ana@example.com",
+        "auth_provider": "google",
+        "google_id": "seed-ana-123",
+        "is_active": True,
+        "email_verified": True,
+        "token_version": 0,
+        "profile": {
+            "full_name": "Ana Pérez",
+            "student_id": "A02020202",
+            "major": "LATI",
+            "semester": 5,
+            "shift": "TV",
+            "tz": "America/Mazatlan",
+            "preferences": {"language": "es"},
+        },
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
     },
 ]
 
@@ -71,12 +98,12 @@ def seed():
     db = get_db()
 
     # Limpia colecciones objetivo (idempotente para demo)
-    db["usuarios"].delete_many({})
+    db["user"].delete_many({})
     db["materias"].delete_many({})
     db["horarios"].delete_many({})
 
-    if USUARIOS:
-        db["usuarios"].insert_many(USUARIOS)
+    if USERS:
+        db["user"].insert_many(USERS)
     if MATERIAS:
         db["materias"].insert_many(MATERIAS)
     horarios_all = HORARIOS_JOSE + HORARIOS_ANA
@@ -84,16 +111,16 @@ def seed():
         db["horarios"].insert_many(horarios_all)
 
     # Índices útiles
-    db["usuarios"].create_index("correo", unique=True)
+    db["user"].create_index("email", unique=True)
+    db["user"].create_index("profile.student_id")
     db["materias"].create_index("codigo", unique=True)
     db["horarios"].create_index([("usuario_correo", 1), ("materia_codigo", 1), ("dia", 1)])
 
     print("Seed completado:")
-    print(f"  usuarios:  {db['usuarios'].count_documents({})}")
+    print(f"  user:      {db['user'].count_documents({})}")
     print(f"  materias:  {db['materias'].count_documents({})}")
     print(f"  horarios:  {db['horarios'].count_documents({})}")
 
 
 if __name__ == "__main__":
     seed()
-

@@ -9,7 +9,7 @@ def build_academic_context(user_email: str) -> str:
     try:
         db = get_db()
 
-        u = db["usuarios"].find_one({"correo": user_email}, {"_id": 0})
+        u = db["user"].find_one({"email": user_email}, {"_id": 0})
 
         hs = list(
             db["horarios"].find(
@@ -29,8 +29,9 @@ def build_academic_context(user_email: str) -> str:
         partes: list[str] = []
 
         if u:
+            prof = (u.get("profile") or {})
             partes.append(
-                f"Alumno: {u.get('nombre')} | Carrera: {u.get('carrera')} | Semestre: {u.get('semestre')}"
+                f"Alumno: {prof.get('full_name')} | Carrera: {prof.get('major')} | Semestre: {prof.get('semester')}"
             )
 
         if hs:

@@ -54,23 +54,73 @@ def ensure_collections() -> None:
     """
     Garantiza colecciones, validadores e índices mínimos.
     """
-    # Usuarios
-    usuarios_validator = {
+    # User (autenticación local/google)
+    user_validator = {
         "bsonType": "object",
-        "required": ["nombre", "correo", "carrera", "semestre"],
+        "required": [
+            "email",
+            "auth_provider",
+            "is_active",
+            "email_verified",
+            "token_version",
+            "created_at",
+            "updated_at",
+        ],
         "properties": {
-            "nombre": {"bsonType": "string", "minLength": 1},
-            "correo": {"bsonType": "string", "minLength": 3},
-            "carrera": {"bsonType": "string", "minLength": 1},
-            "semestre": {"bsonType": "int", "minimum": 1},
+            "email": {"bsonType": "string", "minLength": 3, "description": "lowercase"},
+            "password_hash": {"bsonType": "string"},
+            "auth_provider": {"bsonType": "string", "enum": ["local", "google"]},
+            "google_id": {"bsonType": "string"},
+
+            "is_active": {"bsonType": "bool"},
+            "email_verified": {"bsonType": "bool"},
+            "token_version": {"bsonType": "int", "minimum": 0},
+
+            "profile": {
+                "bsonType": "object",
+                "required": [],
+                "properties": {
+                    "full_name": {"bsonType": "string"},
+                    "student_id": {"bsonType": "string"},
+                    "major": {"bsonType": "string"},
+                    "semester": {"bsonType": "int", "minimum": 1},
+                    "shift": {"bsonType": "string", "enum": ["TM", "TV"]},
+                    "tz": {"bsonType": "string"},
+                    "phone": {"bsonType": "string"},
+                    "birthday": {"bsonType": "string"},
+                    "preferences": {
+                        "bsonType": "object",
+                        "properties": {
+                            "language": {"bsonType": "string"},
+                        },
+                        "additionalProperties": True,
+                    },
+                },
+                "additionalProperties": True,
+            },
+
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
         },
         "additionalProperties": True,
+        # Reglas condicionales según el proveedor de autenticación
+        "allOf": [
+            {
+                "if": {"properties": {"auth_provider": {"const": "local"}}},
+                "then": {"required": ["password_hash"]},
+            },
+            {
+                "if": {"properties": {"auth_provider": {"const": "google"}}},
+                "then": {"required": ["google_id"]},
+            },
+        ],
     }
-    _collmod_or_create("usuarios", usuarios_validator)
+    _collmod_or_create("user", user_validator)
     _ensure_indexes(
-        "usuarios",
+        "user",
         [
-            {"keys": [("correo", 1)], "unique": True, "name": "uniq_correo"},
+            {"keys": [("email", 1)], "unique": True, "name": "uniq_email"},
+            {"keys": [("profile.student_id", 1)], "name": "ix_student_id"},
         ],
     )
 
@@ -168,4 +218,3 @@ def ensure_collections() -> None:
             {"keys": [("usuario_correo", 1), ("ts", -1)], "name": "ix_user_ts"},
         ],
     )
-
