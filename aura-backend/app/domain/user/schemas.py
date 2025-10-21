@@ -29,6 +29,21 @@ class UserProfile(BaseModel):
     birthday: Optional[str] = None  # ISO date (YYYY-MM-DD)
     preferences: Optional[Preferences] = Field(default_factory=Preferences)
 
+class UserProfileUpdate(BaseModel):
+    """
+    Esquema para actualización parcial del perfil.
+    Nota: no aplicamos default a preferences para no sobreescribir accidentalmente.
+    """
+    full_name: Optional[str] = None
+    student_id: Optional[str] = None
+    major: Optional[str] = None
+    semester: Optional[int] = Field(default=None, ge=1)
+    shift: Optional[str] = None
+    tz: Optional[str] = None
+    phone: Optional[str] = None
+    birthday: Optional[str] = None
+    preferences: Optional[Preferences] = None
+
 
 class UserBase(BaseModel):
     email: EmailStr

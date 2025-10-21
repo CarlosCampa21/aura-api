@@ -14,6 +14,8 @@ from app.repositories import auth_repository as auth_repo
 from app.services import google_oauth
 from app.services import email_service
 from app.services.auth_validator import get_current_user
+from app.core.config import settings
+from app.services import token_service
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -55,31 +57,83 @@ def register(payload: RegisterPayload):
                 raise HTTPException(status_code=400, detail="password requerido para local")
             u["password_hash"] = service.hash_password(payload.password)
         inserted_id = insert_user(u)
-        # Envía verificación si es local
+        # Si es local, genera código OTP + sesión de verificación y envía correo
         if u.get("auth_provider") == "local":
             user_doc = auth_repo.get_user_by_id(inserted_id)
             try:
-                email_service.send_verification_email(user_doc)
+                from datetime import datetime, timedelta, timezone
+                import hashlib
+                code = email_service.generate_numeric_code(6)
+                code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+                minutes = settings.email_code_expire_minutes
+                expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+                repo.set_email_verification_code(inserted_id, code_hash, expires_at)
+                email_service.send_verification_code_email(user_doc, code, minutes)
+                vtoken = token_service.create_email_code_token(user_id=inserted_id, expires_in_minutes=minutes)
+                return {"message": "ok", "id": inserted_id, "verification_token": vtoken, "expires_in_minutes": minutes}
             except Exception as ex:
                 # No abortar el registro por fallo de correo
-                return {"message": "ok", "id": inserted_id, "email_notice": f"No se pudo enviar verificación: {ex}"}
+                vtoken = token_service.create_email_code_token(user_id=inserted_id)
+                return {"message": "ok", "id": inserted_id, "verification_token": vtoken, "email_notice": f"No se pudo enviar verificación: {ex}"}
         return {"message": "ok", "id": inserted_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Registro falló: {e}")
 
 
-class VerifyEmailPayload(BaseModel):
-    user_id: str
+class VerifyEmailCodePayload(BaseModel):
+    verification_token: str
+    code: str
 
 
 @router.post("/verify-email", response_model=dict)
-def verify_email_unsafe(payload: VerifyEmailPayload):
+def verify_email_code(payload: VerifyEmailCodePayload):
     """
-    Mantiene compatibilidad con la verificación directa por user_id (no recomendada).
+    Verificación por código (OTP) enviado por correo. Expira en minutos.
     """
     try:
-        repo.set_email_verified(payload.user_id)
+        # Deriva user_id del token de verificación corto
+        t = token_service.verify_email_code_token(payload.verification_token)
+        user_id = t.get("sub")
+        u = repo.get_user_by_id(user_id)
+        if not u:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        # Si ya está verificado, no exigir código
+        if u.get("email_verified"):
+            return {"message": "ok", "already_verified": True}
+
+        stored_hash = u.get("email_verify_code_hash")
+        expires_at = u.get("email_verify_code_expires_at")
+        if not stored_hash or not expires_at:
+            raise HTTPException(status_code=400, detail="No hay código activo")
+
+        import hashlib
+        code_hash = hashlib.sha256(payload.code.strip().encode("utf-8")).hexdigest()
+
+        # Manejar expires_at como naive/aware
+        from datetime import datetime, timezone
+        if isinstance(expires_at, str):
+            try:
+                expires_dt = datetime.fromisoformat(expires_at)
+            except Exception:
+                expires_dt = datetime.now(timezone.utc)
+        else:
+            expires_dt = expires_at
+
+        if expires_dt.tzinfo is None:
+            expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+
+        if datetime.now(timezone.utc) > expires_dt:
+            raise HTTPException(status_code=400, detail="Código expirado")
+
+        if code_hash != stored_hash:
+            raise HTTPException(status_code=400, detail="Código inválido")
+
+        repo.set_email_verified(user_id)
+        repo.clear_email_verification_code(user_id)
         return {"message": "ok"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo verificar email: {e}")
 
@@ -194,17 +248,51 @@ def login_with_google_token(payload: GoogleIdTokenPayload, request: Request):
 
 
 class SendVerificationPayload(BaseModel):
-    user_id: str
+    email: Optional[EmailStr] = None
+    verification_token: Optional[str] = None
 
 
 @router.post("/send-verification", response_model=dict)
 def send_verification(payload: SendVerificationPayload):
+    """
+    Envía código de verificación por correo con expiración corta.
+    """
     try:
-        u = repo.get_user_by_id(payload.user_id)
+        from datetime import datetime, timedelta, timezone
+        import hashlib
+
+        u = None
+        if payload.verification_token:
+            try:
+                t = token_service.verify_email_code_token(payload.verification_token)
+                uid = t.get("sub")
+                u = repo.get_user_by_id(uid)
+            except Exception:
+                # Token inválido → no revelar detalles
+                u = None
+        elif payload.email:
+            # Lookup por email; no revelar si existe
+            u = repo.find_user_by_email(str(payload.email).lower())
+
+        # Si ya está verificado, evita spam
+        if u and u.get("email_verified"):
+            # Renovamos verification_token aunque ya esté verificado? No es necesario.
+            return {"message": "ok", "already_verified": True}
+
+        # Genera código y guarda hash + expiración
+        # Si no encontramos usuario, respondemos 200 sin acción (evita user enumeration)
         if not u:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
-        link = email_service.send_verification_email(u)
-        return {"message": "ok", "link": link}
+            return {"message": "ok"}
+
+        code = email_service.generate_numeric_code(6)
+        code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        minutes = settings.email_code_expire_minutes
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+
+        repo.set_email_verification_code(str(u["_id"]), code_hash, expires_at)
+        email_service.send_verification_code_email(u, code, minutes)
+        vtoken = token_service.create_email_code_token(user_id=str(u["_id"]), expires_in_minutes=minutes)
+        return {"message": "ok", "expires_in_minutes": minutes, "verification_token": vtoken}
     except HTTPException:
         raise
     except Exception as e:

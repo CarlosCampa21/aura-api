@@ -1,5 +1,5 @@
 """
-Creación y verificación de JWT Access Tokens.
+Creación y verificación de JWTs para acceso y flujos de verificación.
 """
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
@@ -47,3 +47,28 @@ def verify_access_token(token: str) -> Dict[str, Any]:
     Decodifica y valida firma/expiración. Devuelve payload.
     """
     return pyjwt.decode(token, key=settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+
+
+def create_email_code_token(*, user_id: str, expires_in_minutes: int | None = None) -> str:
+    """
+    Token corto (no de acceso) para el flujo de verificación por código.
+    Claims: sub(user_id), purpose=email_code, iat, exp, jti.
+    """
+    now = _now_utc()
+    mins = expires_in_minutes if expires_in_minutes is not None else settings.email_code_expire_minutes
+    exp = now + timedelta(minutes=mins)
+    payload = {
+        "sub": user_id,
+        "purpose": "email_code",
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+        "jti": str(uuid4()),
+    }
+    return pyjwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def verify_email_code_token(token: str) -> Dict[str, Any]:
+    payload = pyjwt.decode(token, key=settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    if payload.get("purpose") != "email_code":
+        raise ValueError("Token de verificación inválido")
+    return payload

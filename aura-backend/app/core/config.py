@@ -47,6 +47,8 @@ class Settings(BaseSettings):
 
     # Link base para verificación de email (se le concatena el token)
     email_verify_link_base: str = "http://localhost:8000/api/auth/verify-email?token="
+    # Verificación por código (OTP) – expiración corta
+    email_code_expire_minutes: int = 10
 
     class Config:
         env_file = str(ENV_FILE)   # carga variables del backend, sin depender del CWD

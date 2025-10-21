@@ -4,6 +4,8 @@ Repositorio para la colección `user`.
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 from app.infrastructure.db.mongo import get_db
+from pymongo import ReturnDocument
+from bson import ObjectId
 
 COLLECTION = "user"
 
@@ -66,3 +68,29 @@ def list_users() -> List[Dict[str, Any]]:
         "google_id": 0,
     }
     return list(db[COLLECTION].find({}, projection))
+
+
+def update_user_profile(user_id: str, profile_update: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualiza parcialmente el subdocumento `profile` del usuario y retorna el perfil actualizado.
+    - Solo aplica campos presentes en `profile_update` (exclude_none en el caller).
+    - Si incluye `preferences` (dict), se aplican sus claves de forma puntual.
+    """
+    db = get_db()
+    now = _now_iso()
+    set_ops: Dict[str, Any] = {"updated_at": now}
+
+    for k, v in (profile_update or {}).items():
+        if k == "preferences" and isinstance(v, dict):
+            for pk, pv in v.items():
+                set_ops[f"profile.preferences.{pk}"] = pv
+        else:
+            set_ops[f"profile.{k}"] = v
+
+    doc = db[COLLECTION].find_one_and_update(
+        {"_id": ObjectId(user_id)},
+        {"$set": set_ops},
+        return_document=ReturnDocument.AFTER,
+        projection={"profile": 1, "_id": 0},
+    )
+    return (doc or {}).get("profile") or {}

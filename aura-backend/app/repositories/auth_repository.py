@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 import hashlib
 from bson import ObjectId
+from datetime import datetime, timezone, timedelta
 
 from app.infrastructure.db.mongo import get_db
 
@@ -36,6 +37,26 @@ def set_email_verified(user_id: str) -> None:
     get_db()[USER_COLL].update_one(
         {"_id": ObjectId(user_id)},
         {"$set": {"email_verified": True, "is_active": True, "updated_at": datetime.utcnow().isoformat()}},
+    )
+
+
+def set_email_verification_code(user_id: str, code_hash: str, expires_at: datetime) -> None:
+    get_db()[USER_COLL].update_one(
+        {"_id": ObjectId(user_id)},
+        {
+            "$set": {
+                "email_verify_code_hash": code_hash,
+                "email_verify_code_expires_at": expires_at.astimezone(timezone.utc),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+        },
+    )
+
+
+def clear_email_verification_code(user_id: str) -> None:
+    get_db()[USER_COLL].update_one(
+        {"_id": ObjectId(user_id)},
+        {"$unset": {"email_verify_code_hash": "", "email_verify_code_expires_at": ""}, "$set": {"updated_at": datetime.utcnow().isoformat()}},
     )
 
 
@@ -104,4 +125,3 @@ def revoke_family(family_id: str, reason: str) -> None:
         {"family_id": family_id, "revoked_at": None},
         {"$set": {"revoked_at": _dt(datetime.utcnow()), "revoked_reason": reason}},
     )
-
