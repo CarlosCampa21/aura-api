@@ -29,10 +29,27 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
 fi
 
 PY="${PYTHON:-python}"
+# Ensure we have a usable Python. If not in PATH, try repo-local venvs.
 if ! command -v "$PY" >/dev/null 2>&1; then
-  echo "Python not found in PATH. Ensure a venv is activated." >&2
-  exit 1
+  if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+    PY="$ROOT_DIR/.venv/bin/python"
+  elif [[ -x "$(dirname "$ROOT_DIR")/.venv/bin/python" ]]; then
+    PY="$(dirname "$ROOT_DIR")/.venv/bin/python"
+  else
+    echo "Python not found in PATH. Ensure a venv is activated or create one with 'make venv311'." >&2
+    exit 1
+  fi
 fi
+
+# If PY is a relative path (e.g., .venv/bin/python), make it absolute
+case "$PY" in
+  .venv/*)
+    PY="$ROOT_DIR/$PY"
+    ;;
+  ../.venv/*)
+    PY="$(dirname "$ROOT_DIR")/${PY#../}"
+    ;;
+esac
 
 # Check Python version >= 3.10
 MAJOR_MINOR="$($PY - <<'PY'

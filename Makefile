@@ -13,7 +13,7 @@ PY := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; \
 .PHONY: run install venv311 seed
 
 run:
-	@bash scripts/run_backend.sh
+	@PYTHON=$(PY) bash scripts/run_backend.sh
 
 install:
 	@$(PY) -m pip install -U pip
