@@ -26,11 +26,16 @@ def verify_id_token(id_token_str: str) -> Dict[str, Any]:
         raise GoogleTokenError("Falta GOOGLE_CLIENT_ID en configuración")
     try:
         req = grequests.Request()
-        claims = id_token.verify_oauth2_token(id_token_str, req, settings.google_client_id)
+        # Tolerancia ante pequeñas desincronizaciones de reloj (hasta 5 min)
+        claims = id_token.verify_oauth2_token(
+            id_token_str,
+            req,
+            settings.google_client_id,
+            clock_skew_in_seconds=300,
+        )
         # `aud` lo valida verify_oauth2_token; aseguramos que sea emitido por cuentas de Google
         if claims.get("iss") not in {"https://accounts.google.com", "accounts.google.com"}:
             raise GoogleTokenError("Emisor no válido")
         return claims
     except Exception as e:
         raise GoogleTokenError(str(e))
-
