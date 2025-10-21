@@ -13,6 +13,7 @@ from app.repositories.user_repo import insert_user
 from app.repositories import auth_repository as auth_repo
 from app.services import google_oauth
 from app.services import email_service
+from app.services.auth_validator import get_current_user
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -208,6 +209,26 @@ def send_verification(payload: SendVerificationPayload):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo enviar verificación: {e}")
+
+
+@router.get("/me", response_model=dict)
+def me(user=Depends(get_current_user)):
+    """
+    Devuelve información básica del usuario autenticado.
+    """
+    try:
+        # Filtra campos sensibles
+        out = {
+            "id": str(user.get("_id")),
+            "email": user.get("email"),
+            "auth_provider": user.get("auth_provider"),
+            "email_verified": bool(user.get("email_verified")),
+            "is_active": bool(user.get("is_active")),
+            "profile": user.get("profile") or {},
+        }
+        return out
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo obtener perfil: {e}")
 
 
 class RefreshPayload(BaseModel):
