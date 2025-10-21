@@ -1,7 +1,7 @@
 """
 Rutas de autenticación para AURA.
 """
-from fastapi import APIRouter, HTTPException, status, Request, Depends
+from fastapi import APIRouter, HTTPException, status, Request, Depends, Query
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from typing import Optional, Literal
 
@@ -10,6 +10,9 @@ from app.services import auth_service as service
 from app.services.auth_validator import get_current_user
 from app.services import rate_limit
 from app.repositories.user_repo import insert_user
+from app.repositories import auth_repository as auth_repo
+from app.services import google_oauth
+from app.services import email_service
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -51,6 +54,14 @@ def register(payload: RegisterPayload):
                 raise HTTPException(status_code=400, detail="password requerido para local")
             u["password_hash"] = service.hash_password(payload.password)
         inserted_id = insert_user(u)
+        # Envía verificación si es local
+        if u.get("auth_provider") == "local":
+            user_doc = auth_repo.get_user_by_id(inserted_id)
+            try:
+                email_service.send_verification_email(user_doc)
+            except Exception as ex:
+                # No abortar el registro por fallo de correo
+                return {"message": "ok", "id": inserted_id, "email_notice": f"No se pudo enviar verificación: {ex}"}
         return {"message": "ok", "id": inserted_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Registro falló: {e}")
@@ -61,12 +72,38 @@ class VerifyEmailPayload(BaseModel):
 
 
 @router.post("/verify-email", response_model=dict)
-def verify_email(payload: VerifyEmailPayload):
+def verify_email_unsafe(payload: VerifyEmailPayload):
+    """
+    Mantiene compatibilidad con la verificación directa por user_id (no recomendada).
+    """
     try:
         repo.set_email_verified(payload.user_id)
         return {"message": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo verificar email: {e}")
+
+
+@router.get("/verify-email", response_model=dict)
+def verify_email(token: str = Query(..., description="Token de verificación de email")):
+    """
+    Verifica email usando un token firmado (recomendado). Se invoca desde el link del correo.
+    """
+    try:
+        from app.services.token_service import pyjwt as _jwt
+        from app.core.config import settings
+
+        payload = _jwt.decode(token, key=settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        if payload.get("purpose") != "email_verify":
+            raise HTTPException(status_code=400, detail="Token inválido")
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="Token inválido")
+        repo.set_email_verified(user_id)
+        return {"message": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Token inválido: {e}")
 
 
 class LoginLocalPayload(BaseModel):
@@ -99,12 +136,78 @@ def login(payload: dict, request: Request):
             lp = LoginLocalPayload(**payload)
             tokens = service.login_local(email=str(lp.email).lower(), password=lp.password, device_id=lp.device_id, ip=ip, user_agent=ua)
             return tokens
-        else:
+        elif "google_id" in payload and "email" in payload:
+            # Compat legado: login google con email + google_id (no verifica token)
             gp = LoginGooglePayload(**payload)
             tokens = service.login_google(email=str(gp.email).lower(), google_id=gp.google_id, device_id=gp.device_id, ip=ip, user_agent=ua)
             return tokens
+        else:
+            raise HTTPException(status_code=400, detail="Payload inválido")
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Login inválido: {e}")
+
+
+class GoogleIdTokenPayload(BaseModel):
+    id_token: str
+    device_id: str
+
+
+@router.post("/google", response_model=dict)
+def login_with_google_token(payload: GoogleIdTokenPayload, request: Request):
+    """
+    Verifica el ID Token de Google, crea el usuario si no existe y emite tokens.
+    """
+    try:
+        ip, ua = _client_info(request)
+        claims = google_oauth.verify_id_token(payload.id_token)
+        email = str(claims.get("email", "")).lower()
+        sub = claims.get("sub")  # google_id
+        email_verified = bool(claims.get("email_verified", False))
+
+        if not email or not sub:
+            raise HTTPException(status_code=401, detail="Token de Google incompleto")
+
+        u = repo.find_user_by_email(email)
+        if not u:
+            # auto-provisión
+            inserted_id = insert_user({
+                "email": email,
+                "auth_provider": "google",
+                "google_id": sub,
+                "is_active": True,
+                "email_verified": email_verified,
+            })
+            u = repo.get_user_by_id(inserted_id)
+        else:
+            # Si existe pero no tiene google_id y su provider es google, o si es local, no fusionamos sin migración explícita
+            if u.get("auth_provider") != "google" or u.get("google_id") != sub:
+                raise HTTPException(status_code=409, detail="Cuenta existente con otro método de login")
+
+        access = service.create_access_token(user=u)
+        refresh_raw, _ = service.create_refresh_for_user(user_id=str(u["_id"]), device_id=payload.device_id, ip=ip, user_agent=ua)
+        return {"access_token": access, "refresh_token": refresh_raw}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Google login falló: {e}")
+
+
+class SendVerificationPayload(BaseModel):
+    user_id: str
+
+
+@router.post("/send-verification", response_model=dict)
+def send_verification(payload: SendVerificationPayload):
+    try:
+        u = repo.get_user_by_id(payload.user_id)
+        if not u:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        link = email_service.send_verification_email(u)
+        return {"message": "ok", "link": link}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo enviar verificación: {e}")
 
 
 class RefreshPayload(BaseModel):

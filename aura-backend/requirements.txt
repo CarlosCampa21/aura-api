@@ -8,3 +8,4 @@ openai
 email-validator
 argon2-cffi
 PyJWT
+google-auth

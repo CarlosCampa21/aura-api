@@ -33,6 +33,21 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 30
 
+    # Google OAuth
+    google_client_id: str | None = None
+
+    # Email / SMTP (para verificación de correo)
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_pass: str | None = None
+    smtp_from_email: str | None = None
+    smtp_from_name: str = "AURA"
+    smtp_use_tls: bool = True
+
+    # Link base para verificación de email (se le concatena el token)
+    email_verify_link_base: str = "http://localhost:8000/api/auth/verify-email?token="
+
     class Config:
         env_file = str(ENV_FILE)   # carga variables del backend, sin depender del CWD
 
