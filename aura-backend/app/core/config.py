@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
     ollama_timeout_seconds: int = 120
 
+    # Auth / JWT
+    jwt_secret: str = "change-me-dev-secret"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 30
+
     class Config:
         env_file = str(ENV_FILE)   # carga variables del backend, sin depender del CWD
 

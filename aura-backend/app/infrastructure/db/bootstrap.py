@@ -124,6 +124,44 @@ def ensure_collections() -> None:
         ],
     )
 
+    # Refresh Tokens (rotación segura por familia)
+    refresh_token_validator = {
+        "bsonType": "object",
+        "required": [
+            "user_id",
+            "token_hash",
+            "family_id",
+            "device_id",
+            "ip",
+            "user_agent",
+            "created_at",
+            "expires_at",
+        ],
+        "properties": {
+            "user_id": {"bsonType": "objectId"},
+            "token_hash": {"bsonType": "string"},
+            "family_id": {"bsonType": "string"},
+            "rotation_parent_id": {"bsonType": ["objectId", "null"]},
+            "device_id": {"bsonType": "string"},
+            "ip": {"bsonType": "string"},
+            "user_agent": {"bsonType": "string"},
+            "created_at": {"bsonType": "date"},
+            "expires_at": {"bsonType": "date"},
+            "revoked_at": {"bsonType": ["date", "null"]},
+            "revoked_reason": {"bsonType": ["string", "null"]},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("refresh_token", refresh_token_validator)
+    _ensure_indexes(
+        "refresh_token",
+        [
+            {"keys": [("token_hash", 1)], "unique": True, "name": "uniq_token_hash"},
+            {"keys": [("user_id", 1), ("expires_at", 1)], "name": "ix_user_expires"},
+            {"keys": [("family_id", 1)], "name": "ix_family"},
+        ],
+    )
+
     # Materias (catálogo)
     materias_validator = {
         "bsonType": "object",
