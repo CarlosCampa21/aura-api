@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 # Paths
 ROOT_DIR := $(shell pwd)
-BACKEND_DIR := AURA/aura-backend
+BACKEND_DIR := $(ROOT_DIR)/aura-backend
 
 # Prefer repo venv's python if available; fallback to python3/python
 PY := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; \
@@ -16,7 +16,7 @@ run:
 
 install:
 	@$(PY) -m pip install -U pip
-	@$(PY) -m pip install -r $(BACKEND_DIR)/requirements.txt
+	@$(PY) -m pip install -r "$(BACKEND_DIR)/requirements.txt"
 
 # Create a Python 3.11 venv at repo root
 venv311:
@@ -25,4 +25,4 @@ venv311:
 	@echo "Run: source .venv/bin/activate"
 
 seed:
-	@PYTHONPATH=$(BACKEND_DIR) $(PY) $(BACKEND_DIR)/scripts/seed.py
+	@PYTHONPATH="$(BACKEND_DIR)" $(PY) "$(BACKEND_DIR)/scripts/seed.py"

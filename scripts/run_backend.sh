@@ -8,7 +8,7 @@ set -euo pipefail
 # - Runs uvicorn pointing to the backend app dir
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKEND_DIR="$ROOT_DIR/AURA/aura-backend"
+BACKEND_DIR="$ROOT_DIR/aura-backend"
 
 if [[ ! -d "$BACKEND_DIR/app" ]]; then
   echo "Backend directory not found at: $BACKEND_DIR" >&2
