@@ -216,26 +216,7 @@ def ensure_collections() -> None:
 
     # (Colección `notas` eliminada en favor de `note`)
 
-    # Consultas (histórico de preguntas/respuestas)
-    consultas_validator = {
-        "bsonType": "object",
-        "required": ["usuario_correo", "pregunta", "respuesta", "ts"],
-        "properties": {
-            "usuario_correo": {"bsonType": "string", "minLength": 3},
-            "pregunta": {"bsonType": "string", "minLength": 1},
-            "respuesta": {"bsonType": "string"},
-            "ts": {"bsonType": "string", "minLength": 10},
-        },
-        "additionalProperties": True,
-    }
-    _collmod_or_create("consultas", consultas_validator)
-    _ensure_indexes(
-        "consultas",
-        [
-            {"keys": [("usuario_correo", 1)], "name": "ix_consultas_user"},
-            {"keys": [("usuario_correo", 1), ("ts", -1)], "name": "ix_user_ts"},
-        ],
-    )
+    # (Colección `consultas` eliminada: reemplazada por conversations/messages)
 
     # Conversations (chat)
     conversations_validator = {
