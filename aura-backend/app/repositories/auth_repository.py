@@ -25,8 +25,7 @@ def find_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     return get_db()[USER_COLL].find_one({"email": email})
 
 
-def find_user_by_google_id(google_id: str) -> Optional[Dict[str, Any]]:
-    return get_db()[USER_COLL].find_one({"google_id": google_id})
+# Eliminado: búsqueda directa por google_id no se usa actualmente.
 
 
 def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
@@ -60,11 +59,7 @@ def clear_email_verification_code(user_id: str) -> None:
     )
 
 
-def set_password_hash(user_id: str, password_hash: str) -> None:
-    get_db()[USER_COLL].update_one(
-        {"_id": ObjectId(user_id)},
-        {"$set": {"password_hash": password_hash, "updated_at": datetime.utcnow().isoformat()}},
-    )
+# Eliminado: actualización directa de password_hash no se usa actualmente.
 
 
 def increment_token_version(user_id: str) -> None:

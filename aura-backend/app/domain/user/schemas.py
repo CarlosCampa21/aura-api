@@ -74,9 +74,9 @@ class UserBase(BaseModel):
         return self
 
 
-class UserCreate(UserBase):
-    """Payload de creación de usuario."""
-    pass
+# Nota: La creación de usuarios se realiza vía `/auth/register`.
+# Si en el futuro se expone un endpoint administrativo para creación directa,
+# se puede reintroducir un esquema específico (p. ej., `AdminUserCreate`).
 
 
 class UserOut(BaseModel):
