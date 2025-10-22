@@ -214,27 +214,7 @@ def ensure_collections() -> None:
         ],
     )
 
-    # Notas (por usuario y created_at)
-    notas_validator = {
-        "bsonType": "object",
-        "required": ["usuario_correo", "titulo", "contenido", "tags", "created_at"],
-        "properties": {
-            "usuario_correo": {"bsonType": "string", "minLength": 3},
-            "titulo": {"bsonType": "string", "minLength": 1},
-            "contenido": {"bsonType": "string", "minLength": 1},
-            "tags": {"bsonType": "array", "items": {"bsonType": "string"}},
-            "created_at": {"bsonType": "string", "minLength": 10},
-        },
-        "additionalProperties": True,
-    }
-    _collmod_or_create("notas", notas_validator)
-    _ensure_indexes(
-        "notas",
-        [
-            {"keys": [("usuario_correo", 1)], "name": "ix_notas_user"},
-            {"keys": [("usuario_correo", 1), ("created_at", -1)], "name": "ix_user_created"},
-        ],
-    )
+    # (Colección `notas` eliminada en favor de `note`)
 
     # Consultas (histórico de preguntas/respuestas)
     consultas_validator = {
@@ -254,5 +234,103 @@ def ensure_collections() -> None:
         [
             {"keys": [("usuario_correo", 1)], "name": "ix_consultas_user"},
             {"keys": [("usuario_correo", 1), ("ts", -1)], "name": "ix_user_ts"},
+        ],
+    )
+
+    # Conversations (chat)
+    conversations_validator = {
+        "bsonType": "object",
+        "required": [
+            "user_id",
+            "title",
+            "status",
+            "model",
+            "last_message_at",
+            "created_at",
+            "updated_at",
+        ],
+        "properties": {
+            "user_id": {"bsonType": "string", "minLength": 10},
+            "title": {"bsonType": "string"},
+            "status": {"bsonType": "string", "enum": ["active", "archived"]},
+            "model": {"bsonType": "string"},
+            "settings": {"bsonType": ["object", "null"]},
+            "metadata": {"bsonType": ["object", "null"]},
+            "last_message_at": {"bsonType": "string", "minLength": 10},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("conversations", conversations_validator)
+    _ensure_indexes(
+        "conversations",
+        [
+            {"keys": [("user_id", 1), ("updated_at", -1)], "name": "ix_conv_user_updated"},
+            {"keys": [("user_id", 1), ("status", 1), ("updated_at", -1)], "name": "ix_conv_user_status"},
+        ],
+    )
+
+    # Messages (chat)
+    messages_validator = {
+        "bsonType": "object",
+        "required": ["conversation_id", "user_id", "role", "content", "created_at"],
+        "properties": {
+            "conversation_id": {"bsonType": "string", "minLength": 10},
+            "user_id": {"bsonType": "string", "minLength": 10},
+            "role": {"bsonType": "string", "enum": ["user", "assistant", "system", "tool"]},
+            "content": {"bsonType": "string"},
+            "attachments": {"bsonType": "array", "items": {"bsonType": "string"}},
+            "citations": {"bsonType": "array"},
+            "model_snapshot": {"bsonType": ["string", "null"]},
+            "tokens_input": {"bsonType": ["int", "null"]},
+            "tokens_output": {"bsonType": ["int", "null"]},
+            "error": {"bsonType": ["object", "null"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("messages", messages_validator)
+    _ensure_indexes(
+        "messages",
+        [
+            {"keys": [("conversation_id", 1), ("created_at", 1)], "name": "ix_msg_conv_created"},
+            {"keys": [("user_id", 1), ("created_at", -1)], "name": "ix_msg_user_created"},
+        ],
+    )
+
+    # Note (singular)
+    note_validator = {
+        "bsonType": "object",
+        "required": [
+            "user_id",
+            "title",
+            "body",
+            "tags",
+            "status",
+            "source",
+            "created_at",
+            "updated_at",
+        ],
+        "properties": {
+            "user_id": {"bsonType": "string", "minLength": 10},
+            "title": {"bsonType": "string", "minLength": 1},
+            "body": {"bsonType": "string", "minLength": 1},
+            "tags": {"bsonType": "array", "items": {"bsonType": "string"}},
+            "status": {"bsonType": "string", "enum": ["active", "archived"]},
+            "source": {"bsonType": "string", "enum": ["manual", "assistant", "imported"]},
+            "related_conversation_id": {"bsonType": ["string", "null"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("note", note_validator)
+    _ensure_indexes(
+        "note",
+        [
+            {"keys": [("user_id", 1), ("updated_at", -1)], "name": "ix_note_user_updated"},
+            {"keys": [("user_id", 1), ("status", 1), ("updated_at", -1)], "name": "ix_note_user_status"},
+            {"keys": [("user_id", 1), ("tags", 1)], "name": "ix_note_user_tags"},
         ],
     )
