@@ -37,6 +37,20 @@ def insert_message(doc: Dict[str, Any]) -> str:
             {"_id": ObjectId(str(data.get("conversation_id")))},
             {"$set": {"last_message_at": now, "updated_at": now}},
         )
+        # Si es el primer mensaje del usuario (o placeholder), usarlo como título
+        if str(data.get("role")) == "user":
+            conv = db[CONV_COLLECTION].find_one({"_id": ObjectId(str(data.get("conversation_id")))}, {"title": 1})
+            cur_title = (conv or {}).get("title") or ""
+            if not cur_title or cur_title.strip().lower() in {"nuevo chat", "new chat"}:
+                new_title = (data.get("content") or "").strip()
+                if new_title:
+                    # Limita longitud del título
+                    if len(new_title) > 80:
+                        new_title = new_title[:77] + "…"
+                    db[CONV_COLLECTION].update_one(
+                        {"_id": ObjectId(str(data.get("conversation_id")))},
+                        {"$set": {"title": new_title, "updated_at": now}},
+                    )
     except Exception:
         # No romper la inserción si falla la actualización cruzada
         pass
@@ -53,4 +67,3 @@ def list_messages(conversation_id: Optional[str] = None, user_id: Optional[str] 
         filtro["user_id"] = str(user_id)
     projection = {"_id": 0}
     return list(db[COLLECTION].find(filtro, projection).sort("created_at", 1))
-

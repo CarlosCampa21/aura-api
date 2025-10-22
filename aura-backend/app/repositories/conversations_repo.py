@@ -41,8 +41,13 @@ def list_conversations(user_id: Optional[str] = None, status: Optional[str] = No
         filtro["user_id"] = str(user_id)
     if status:
         filtro["status"] = status
-    projection = {"_id": 0}
-    return list(db[COLLECTION].find(filtro, projection).sort("updated_at", -1))
+    docs = list(db[COLLECTION].find(filtro).sort("updated_at", -1))
+    out: List[Dict[str, Any]] = []
+    for d in docs:
+        d = dict(d)
+        d["id"] = str(d.pop("_id", ""))
+        out.append(d)
+    return out
 
 
 def update_conversation_meta(conversation_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
