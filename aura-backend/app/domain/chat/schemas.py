@@ -65,3 +65,25 @@ class MessageOut(BaseModel):
     error: Optional[Dict] = None
     created_at: str
 
+
+class ChatAskPayload(BaseModel):
+    """Payload de orquestación de chat (alta de conversación y mensajes)."""
+
+    user_id: str
+    content: str
+    conversation_id: Optional[str] = None
+    model: Optional[str] = None
+    settings: Optional[Dict] = None
+    create_if_missing: bool = True
+    # Orquestación avanzada
+    stream: bool = False
+    save_note: bool = False
+    note_title: Optional[str] = None
+    note_tags: List[str] = Field(default_factory=list)
+
+
+class ChatAskOut(BaseModel):
+    conversation_id: str
+    user_message: MessageOut
+    assistant_message: MessageOut
+    model: Optional[str] = None

@@ -8,6 +8,8 @@ from app.domain.chat.schemas import (
     ConversationOut,
     MessageCreate,
     MessageOut,
+    ChatAskPayload,
+    ChatAskOut,
 )
 from app.repositories.conversations_repo import (
     insert_conversation,
@@ -17,6 +19,11 @@ from app.repositories.messages_repo import (
     insert_message,
     list_messages as repo_list_messages,
 )
+from app.repositories.auth_repository import get_user_by_id
+from app.repositories.note_repo import insert_note as insert_note_doc
+from fastapi.responses import StreamingResponse
+from app.core.config import settings
+from app.services import ask_service
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -87,3 +94,189 @@ def get_messages(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"List messages failed: {e}")
 
+
+@router.post("/ask", status_code=status.HTTP_201_CREATED, response_model=dict)
+def chat_ask(payload: ChatAskPayload):
+    """
+    Orquesta la interacción de chat:
+      - Crea conversación si falta (opcional)
+      - Inserta mensaje del usuario
+      - Genera respuesta con IA (usa contexto académico del usuario)
+      - Inserta mensaje del asistente
+      - Devuelve ambos mensajes y el id de la conversación
+    """
+    try:
+        conversation_id = payload.conversation_id
+        # Determina modelo efectivo
+        effective_model = payload.model or (settings.openai_model_primary if settings.openai_api_key else f"ollama:{settings.ollama_model}")
+        if not conversation_id:
+            if not payload.create_if_missing:
+                raise HTTPException(status_code=400, detail="conversation_id requerido cuando create_if_missing=false")
+            conversation_id = insert_conversation({
+                "user_id": payload.user_id,
+                "model": effective_model,
+                "title": payload.content[:80] if payload.content else "",
+            })
+
+        # Mensaje del usuario
+        user_msg_id = insert_message({
+            "conversation_id": conversation_id,
+            "user_id": payload.user_id,
+            "role": "user",
+            "content": payload.content,
+            "attachments": [],
+        })
+
+        # Contexto por email (si existe)
+        email = None
+        try:
+            u = get_user_by_id(payload.user_id)
+            if u and u.get("email"):
+                email = str(u.get("email"))
+        except Exception:
+            pass
+
+        ans = ask_service.ask(email or "", payload.content)
+        answer_text = ans.get("respuesta") or "Sin respuesta"
+
+        # Mensaje del asistente
+        asst_msg_id = insert_message({
+            "conversation_id": conversation_id,
+            "user_id": payload.user_id,
+            "role": "assistant",
+            "content": answer_text,
+            "attachments": [],
+        })
+
+        out = ChatAskOut(
+            conversation_id=conversation_id,
+            user_message=MessageOut(
+                conversation_id=conversation_id,
+                user_id=payload.user_id,
+                role="user",
+                content=payload.content,
+                attachments=[],
+                citations=[],
+                model_snapshot=effective_model,
+                tokens_input=None,
+                tokens_output=None,
+                error=None,
+                created_at="",
+            ),
+            assistant_message=MessageOut(
+                conversation_id=conversation_id,
+                user_id=payload.user_id,
+                role="assistant",
+                content=answer_text,
+                attachments=[],
+                citations=[],
+                model_snapshot=effective_model,
+                tokens_input=None,
+                tokens_output=None,
+                error=None,
+                created_at="",
+            ),
+            model=effective_model,
+        ).model_dump()
+
+        # Guardado opcional como nota
+        if payload.save_note:
+            try:
+                insert_note_doc({
+                    "user_id": payload.user_id,
+                    "title": payload.note_title or (payload.content[:80] if payload.content else "Nota de chat"),
+                    "body": answer_text,
+                    "tags": [str(t).strip().lower() for t in (payload.note_tags or [])],
+                    "status": "active",
+                    "source": "assistant",
+                    "related_conversation_id": conversation_id,
+                })
+            except Exception:
+                pass
+
+        return {"message": "ok", **out, "user_message_id": user_msg_id, "assistant_message_id": asst_msg_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat ask failed: {e}")
+
+
+@router.post("/ask/stream")
+def chat_ask_stream(payload: ChatAskPayload):
+    """
+    Variante con SSE (Server-Sent Events). Emite el texto del asistente en `data:` por chunks.
+    Al finalizar, inserta el mensaje del asistente completo y opcionalmente una nota.
+    """
+    try:
+        conversation_id = payload.conversation_id
+        effective_model = payload.model or (settings.openai_model_primary if settings.openai_api_key else f"ollama:{settings.ollama_model}")
+        if not conversation_id:
+            if not payload.create_if_missing:
+                raise HTTPException(status_code=400, detail="conversation_id requerido cuando create_if_missing=false")
+            conversation_id = insert_conversation({
+                "user_id": payload.user_id,
+                "model": effective_model,
+                "title": payload.content[:80] if payload.content else "",
+            })
+
+        # Inserta mensaje del usuario
+        insert_message({
+            "conversation_id": conversation_id,
+            "user_id": payload.user_id,
+            "role": "user",
+            "content": payload.content,
+            "attachments": [],
+        })
+
+        # Prepara respuesta completa (sin streaming real del proveedor, se chunkea localmente)
+        email = None
+        try:
+            u = get_user_by_id(payload.user_id)
+            if u and u.get("email"):
+                email = str(u.get("email"))
+        except Exception:
+            pass
+
+        ans = ask_service.ask(email or "", payload.content)
+        full_text = (ans.get("respuesta") or "Sin respuesta").strip()
+
+        def _gen():
+            # Envia “open”
+            yield "event: open\n" + "data: {}\n\n"
+            # Chunks de ~120 caracteres para Postman/DevTools
+            size = 120
+            for i in range(0, len(full_text), size):
+                chunk = full_text[i : i + size]
+                yield f"data: {chunk}\n\n"
+            yield "event: end\n" + "data: {}\n\n"
+
+        # Tras crear el generador, persiste el mensaje completo del asistente (no bloquea streaming)
+        try:
+            insert_message({
+                "conversation_id": conversation_id,
+                "user_id": payload.user_id,
+                "role": "assistant",
+                "content": full_text,
+                "attachments": [],
+            })
+            if payload.save_note:
+                try:
+                    insert_note_doc({
+                        "user_id": payload.user_id,
+                        "title": payload.note_title or (payload.content[:80] if payload.content else "Nota de chat"),
+                        "body": full_text,
+                        "tags": [str(t).strip().lower() for t in (payload.note_tags or [])],
+                        "status": "active",
+                        "source": "assistant",
+                        "related_conversation_id": conversation_id,
+                    })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return StreamingResponse(_gen(), media_type="text/event-stream")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat ask stream failed: {e}")
