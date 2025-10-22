@@ -162,61 +162,165 @@ def ensure_collections() -> None:
         ],
     )
 
-    # Materias (catálogo)
-    materias_validator = {
-        "bsonType": "object",
-        "required": ["codigo", "nombre", "profesor", "salon"],
-        "properties": {
-            "codigo": {"bsonType": "string", "minLength": 1},
-            "nombre": {"bsonType": "string", "minLength": 1},
-            "profesor": {"bsonType": "string", "minLength": 1},
-            "salon": {"bsonType": "string", "minLength": 1},
-            "dias": {"bsonType": "array", "items": {"bsonType": "string"}},
-            "hora_inicio": {"bsonType": "string"},
-            "hora_fin": {"bsonType": "string"},
-        },
-        "additionalProperties": True,
-    }
-    _collmod_or_create("materias", materias_validator)
-    _ensure_indexes(
-        "materias",
-        [
-            {"keys": [("codigo", 1)], "unique": True, "name": "uniq_codigo"},
-        ],
-    )
+    # (Colección `materias` legacy deshabilitada: reemplazada por catálogos + timetable)
 
     # Horarios (para consultas por usuario + día + hora)
     # Día admite nombres comunes en español (corto/largo, con/sin acento) para compatibilidad
-    horarios_validator = {
-        "bsonType": "object",
-        "required": ["usuario_correo", "materia_codigo", "dia", "hora_inicio", "hora_fin"],
-        "properties": {
-            "usuario_correo": {"bsonType": "string", "minLength": 3},
-            "materia_codigo": {"bsonType": "string", "minLength": 1},
-            "dia": {
-                "bsonType": "string",
-                "enum": [
-                    "Lunes", "Martes", "Miercoles", "Miércoles", "Jueves", "Viernes", "Sabado", "Sábado", "Domingo",
-                    "Lun", "Mar", "Mie", "Mié", "Jue", "Vie", "Sab", "Sáb", "Dom",
-                ],
-            },
-            "hora_inicio": {"bsonType": "string", "pattern": "^\\d{2}:\\d{2}$"},
-            "hora_fin": {"bsonType": "string", "pattern": "^\\d{2}:\\d{2}$"},
-        },
-        "additionalProperties": True,
-    }
-    _collmod_or_create("horarios", horarios_validator)
-    _ensure_indexes(
-        "horarios",
-        [
-            {"keys": [("usuario_correo", 1)], "name": "ix_horarios_user"},
-            {"keys": [("usuario_correo", 1), ("dia", 1), ("hora_inicio", 1)], "name": "ix_user_dia_inicio"},
-        ],
-    )
+    # (Colección `horarios` legacy deshabilitada: reemplazada por timetable/timetable_entry)
 
     # (Colección `notas` eliminada en favor de `note`)
 
     # (Colección `consultas` eliminada: reemplazada por conversations/messages)
+
+    # Academics: Catálogos
+    department_validator = {
+        "bsonType": "object",
+        "required": ["code", "name", "created_at", "updated_at"],
+        "properties": {
+            "code": {"bsonType": "string"},
+            "name": {"bsonType": "string"},
+            "campus": {"bsonType": ["string", "null"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("department", department_validator)
+    _ensure_indexes("department", [{"keys": [("code", 1)], "unique": True, "name": "uniq_department_code"}])
+
+    program_validator = {
+        "bsonType": "object",
+        "required": ["department_code", "code", "created_at", "updated_at"],
+        "properties": {
+            "department_code": {"bsonType": "string"},
+            "code": {"bsonType": "string"},
+            "name": {"bsonType": ["string", "null"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("program", program_validator)
+    _ensure_indexes("program", [{"keys": [("department_code", 1), ("code", 1)], "unique": True, "name": "uniq_program"}])
+
+    period_validator = {
+        "bsonType": "object",
+        "required": ["code", "year", "term", "status", "created_at", "updated_at"],
+        "properties": {
+            "code": {"bsonType": "string"},
+            "year": {"bsonType": "int"},
+            "term": {"bsonType": "string"},
+            "start_date": {"bsonType": ["string", "null"]},
+            "end_date": {"bsonType": ["string", "null"]},
+            "status": {"bsonType": "string", "enum": ["planned", "active", "archived"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("period", period_validator)
+    _ensure_indexes("period", [
+        {"keys": [("code", 1)], "unique": True, "name": "uniq_period_code"},
+        {"keys": [("status", 1)], "name": "ix_period_status"},
+    ])
+
+    course_validator = {
+        "bsonType": "object",
+        "required": ["name", "created_at", "updated_at"],
+        "properties": {
+            "code": {"bsonType": ["string", "null"]},
+            "name": {"bsonType": "string"},
+            "short_name": {"bsonType": ["string", "null"]},
+            "credits": {"bsonType": ["int", "null"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("course", course_validator)
+    _ensure_indexes("course", [
+        {"keys": [("code", 1)], "name": "ix_course_code", "unique": False},
+        {"keys": [("name", 1)], "name": "ix_course_name"},
+    ])
+
+    # Academics: Timetables
+    timetable_validator = {
+        "bsonType": "object",
+        "required": [
+            "department_code",
+            "program_code",
+            "semester",
+            "group",
+            "period_code",
+            "title",
+            "status",
+            "version",
+            "is_current",
+            "created_at",
+            "updated_at",
+        ],
+        "properties": {
+            "department_code": {"bsonType": "string"},
+            "program_code": {"bsonType": "string"},
+            "semester": {"bsonType": "int", "minimum": 1},
+            "group": {"bsonType": "string"},
+            "period_code": {"bsonType": "string"},
+            "shift": {"bsonType": ["string", "null"], "enum": ["TM", "TV", None]},
+            "title": {"bsonType": "string"},
+            "status": {"bsonType": "string", "enum": ["draft", "published", "archived"]},
+            "version": {"bsonType": "int", "minimum": 1},
+            "is_current": {"bsonType": "bool"},
+            "notes": {"bsonType": ["string", "null"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+            "published_at": {"bsonType": ["string", "null"]},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("timetable", timetable_validator)
+    _ensure_indexes(
+        "timetable",
+        [
+            {"keys": [("department_code", 1), ("program_code", 1), ("semester", 1), ("group", 1), ("period_code", 1), ("version", 1)], "name": "uniq_timetable_combo", "unique": True},
+            {"keys": [("department_code", 1), ("program_code", 1), ("semester", 1), ("group", 1), ("period_code", 1), ("is_current", 1)], "name": "ix_current_combo"},
+        ],
+    )
+
+    timetable_entry_validator = {
+        "bsonType": "object",
+        "required": [
+            "timetable_id",
+            "day",
+            "start_time",
+            "end_time",
+            "course_name",
+            "created_at",
+            "updated_at",
+        ],
+        "properties": {
+            "timetable_id": {"bsonType": "string"},
+            "day": {"bsonType": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat"]},
+            "start_time": {"bsonType": "string", "pattern": "^\\d{2}:\\d{2}$"},
+            "end_time": {"bsonType": "string", "pattern": "^\\d{2}:\\d{2}$"},
+            "course_name": {"bsonType": "string"},
+            "instructor": {"bsonType": ["string", "null"]},
+            "room_code": {"bsonType": ["string", "null"]},
+            "modality": {"bsonType": "string", "enum": ["class", "lab", "seminar", "other"]},
+            "module": {"bsonType": ["string", "null"]},
+            "notes": {"bsonType": ["string", "null"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("timetable_entry", timetable_entry_validator)
+    _ensure_indexes(
+        "timetable_entry",
+        [
+            {"keys": [("timetable_id", 1), ("day", 1), ("start_time", 1)], "name": "ix_timetable_day_start"},
+            {"keys": [("timetable_id", 1)], "name": "ix_timetable"},
+        ],
+    )
 
     # Conversations (chat)
     conversations_validator = {

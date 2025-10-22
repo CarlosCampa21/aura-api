@@ -11,20 +11,33 @@ def build_academic_context(user_email: str) -> str:
 
         u = db["user"].find_one({"email": user_email}, {"_id": 0})
 
-        hs = list(
-            db["horarios"].find(
-                {"usuario_correo": user_email},
-                {"_id": 0}
-            )
-        )
+        # Deriva contexto de timetable/timetable_entry (nuevo modelo)
+        prof = (u or {}).get("profile") or {}
+        program_code = (prof.get("major") or "").upper() or None
+        semester = prof.get("semester") or None
+        shift = prof.get("shift") or None  # "TM"/"TV" si existe
 
-        # Catálogo de materias (recorta a 8 para no inflar prompts)
-        ms = list(
-            db["materias"].find(
-                {},
-                {"_id": 0}
+        timetable = None
+        if program_code and semester:
+            q = {
+                "department_code": "DASC",
+                "program_code": program_code,
+                "semester": semester,
+                "period_code": {"$exists": True},
+                "is_current": True,
+            }
+            if shift:
+                q["shift"] = shift
+            timetable = db["timetable"].find_one(q, {"_id": 1, "title": 1})
+
+        entries = []
+        if timetable:
+            entries = list(
+                db["timetable_entry"].find(
+                    {"timetable_id": str(timetable.get("_id"))},
+                    {"_id": 0}
+                ).sort([("day", 1), ("start_time", 1)])
             )
-        )
 
         partes: list[str] = []
 
@@ -34,19 +47,15 @@ def build_academic_context(user_email: str) -> str:
                 f"Alumno: {prof.get('full_name')} | Carrera: {prof.get('major')} | Semestre: {prof.get('semester')}"
             )
 
-        if hs:
-            horarios_txt = "; ".join(
-                f"{h['materia_codigo']} {h['dia']} {h['hora_inicio']}-{h['hora_fin']}"
-                for h in hs
-            )
-            partes.append(f"Horarios del alumno: {horarios_txt}")
+        if timetable:
+            partes.append(f"Horario vigente: {timetable.get('title')}")
 
-        if ms:
-            materias_txt = "; ".join(
-                f"{m['codigo']}:{m['nombre']} ({m['profesor']}, {m['salon']})"
-                for m in ms[:8]
+        if entries:
+            bloques = "; ".join(
+                f"{e['day']} {e['start_time']}-{e['end_time']} {e['course_name']} {e.get('room_code') or ''}".strip()
+                for e in entries[:12]
             )
-            partes.append(f"Materias catálogo (máx. 8): {materias_txt}")
+            partes.append(f"Bloques (máx.12): {bloques}")
 
         return "\n".join(partes) if partes else "Sin datos académicos del alumno aún."
     except Exception:
