@@ -24,7 +24,7 @@ from app.repositories.note_repo import insert_note as insert_note_doc
 from fastapi.responses import StreamingResponse
 from app.core.config import settings
 from app.services import rate_limit
-from app.services.auth_validator import get_current_user
+from app.services.auth_validator import get_current_user_loose as get_current_user
 from time import monotonic
 from app.services import ask_service
 
