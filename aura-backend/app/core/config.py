@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # Verificación por código (OTP) – expiración corta
     email_code_expire_minutes: int = 10
 
+    # Chat limits / rate limit (configurable)
+    chat_guest_rate_per_min: int = 10
+    chat_auth_rate_per_min: int = 30
+    chat_guest_stream_rate_per_min: int = 8
+    chat_auth_stream_rate_per_min: int = 20
+    chat_prompt_max_chars_guest: int = 800
+    chat_prompt_max_chars_auth: int = 4000
+
     class Config:
         env_file = str(ENV_FILE)   # carga variables del backend, sin depender del CWD
 

@@ -24,6 +24,8 @@ from app.repositories.note_repo import insert_note as insert_note_doc
 from fastapi.responses import StreamingResponse
 from app.core.config import settings
 from app.services import rate_limit
+from app.services.auth_validator import get_current_user
+from time import monotonic
 from app.services import ask_service
 
 
@@ -108,16 +110,19 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
       - Devuelve ambos mensajes y el id de la conversación
     """
     try:
+        t0 = monotonic()
         conversation_id = payload.conversation_id
         # Determina modelo efectivo
         effective_model = payload.model or (settings.openai_model_primary if settings.openai_api_key else f"ollama:{settings.ollama_model}")
         # Guest/Auth mode
         user = None
+        # Si se envía user_id, requiere Auth y coincidencia
         if payload.user_id:
-            try:
-                user = get_user_by_id(payload.user_id)
-            except Exception:
-                user = None
+            auth_header = request.headers.get("authorization")
+            current = get_current_user(authorization=auth_header)
+            if str(current.get("_id")) != str(payload.user_id):
+                raise HTTPException(status_code=403, detail="user_id no coincide con el token")
+            user = current
         mode = "auth" if user else "guest"
         session_id = payload.session_id or x_session_id
         if mode == "guest":
@@ -126,12 +131,16 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
                 # permite operar, pero sugiere al front guardarlo
                 import uuid
                 session_id = str(uuid.uuid4())
-            if not rate_limit.allow((session_id, "/chat/ask"), limit=10, window_seconds=60):
+            if not rate_limit.allow((session_id, "/chat/ask"), limit=settings.chat_guest_rate_per_min, window_seconds=60):
                 raise HTTPException(status_code=429, detail="Demasiadas solicitudes (invitado). Intenta más tarde.")
+            if len(payload.content or "") > settings.chat_prompt_max_chars_guest:
+                raise HTTPException(status_code=413, detail="Prompt demasiado largo para invitado")
         else:
             uid_key = f"user:{payload.user_id}:{request.client.host if request.client else ''}"
-            if not rate_limit.allow((uid_key, "/chat/ask"), limit=30, window_seconds=60):
+            if not rate_limit.allow((uid_key, "/chat/ask"), limit=settings.chat_auth_rate_per_min, window_seconds=60):
                 raise HTTPException(status_code=429, detail="Demasiadas solicitudes. Intenta más tarde.")
+            if len(payload.content or "") > settings.chat_prompt_max_chars_auth:
+                raise HTTPException(status_code=413, detail="Prompt demasiado largo")
         if not conversation_id:
             if not payload.create_if_missing:
                 raise HTTPException(status_code=400, detail="conversation_id requerido cuando create_if_missing=false")
@@ -216,7 +225,10 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
             except Exception:
                 pass
 
-        return {"message": "ok", **out, "user_message_id": user_msg_id, "assistant_message_id": asst_msg_id}
+        dt_ms = int((monotonic() - t0) * 1000)
+        # Log sencillo
+        print(f"/chat/ask mode={mode} model={effective_model} latency_ms={dt_ms}")
+        return {"message": "ok", **out, "user_message_id": user_msg_id, "assistant_message_id": asst_msg_id, "latency_ms": dt_ms}
     except HTTPException:
         raise
     except Exception as e:
@@ -230,26 +242,32 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
     Al finalizar, inserta el mensaje del asistente completo y opcionalmente una nota.
     """
     try:
+        t0 = monotonic()
         conversation_id = payload.conversation_id
         effective_model = payload.model or (settings.openai_model_primary if settings.openai_api_key else f"ollama:{settings.ollama_model}")
         user = None
         if payload.user_id:
-            try:
-                user = get_user_by_id(payload.user_id)
-            except Exception:
-                user = None
+            auth_header = request.headers.get("authorization")
+            current = get_current_user(authorization=auth_header)
+            if str(current.get("_id")) != str(payload.user_id):
+                raise HTTPException(status_code=403, detail="user_id no coincide con el token")
+            user = current
         mode = "auth" if user else "guest"
         session_id = payload.session_id or x_session_id
         if mode == "guest":
             if not session_id:
                 import uuid
                 session_id = str(uuid.uuid4())
-            if not rate_limit.allow((session_id, "/chat/ask/stream"), limit=8, window_seconds=60):
+            if not rate_limit.allow((session_id, "/chat/ask/stream"), limit=settings.chat_guest_stream_rate_per_min, window_seconds=60):
                 raise HTTPException(status_code=429, detail="Demasiadas solicitudes (invitado). Intenta más tarde.")
+            if len(payload.content or "") > settings.chat_prompt_max_chars_guest:
+                raise HTTPException(status_code=413, detail="Prompt demasiado largo para invitado")
         else:
             uid_key = f"user:{payload.user_id}:{request.client.host if request.client else ''}"
-            if not rate_limit.allow((uid_key, "/chat/ask/stream"), limit=20, window_seconds=60):
+            if not rate_limit.allow((uid_key, "/chat/ask/stream"), limit=settings.chat_auth_stream_rate_per_min, window_seconds=60):
                 raise HTTPException(status_code=429, detail="Demasiadas solicitudes. Intenta más tarde.")
+            if len(payload.content or "") > settings.chat_prompt_max_chars_auth:
+                raise HTTPException(status_code=413, detail="Prompt demasiado largo")
         if not conversation_id:
             if not payload.create_if_missing:
                 raise HTTPException(status_code=400, detail="conversation_id requerido cuando create_if_missing=false")
@@ -319,7 +337,10 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
         except Exception:
             pass
 
-        return StreamingResponse(_gen(), media_type="text/event-stream")
+        resp = StreamingResponse(_gen(), media_type="text/event-stream")
+        dt_ms = int((monotonic() - t0) * 1000)
+        print(f"/chat/ask/stream mode={mode} model={effective_model} latency_ms={dt_ms}")
+        return resp
     except HTTPException:
         raise
     except Exception as e:
