@@ -34,13 +34,15 @@ def insert_conversation(doc: Dict[str, Any]) -> str:
     return str(res.inserted_id)
 
 
-def list_conversations(user_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_conversations(user_id: Optional[str] = None, status: Optional[str] = None, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     db = get_db()
     filtro: Dict[str, Any] = {}
     if user_id:
         filtro["user_id"] = str(user_id)
     if status:
         filtro["status"] = status
+    if session_id:
+        filtro["session_id"] = str(session_id)
     docs = list(db[COLLECTION].find(filtro).sort("updated_at", -1))
     out: List[Dict[str, Any]] = []
     for d in docs:

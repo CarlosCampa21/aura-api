@@ -58,12 +58,14 @@ def insert_message(doc: Dict[str, Any]) -> str:
     return str(res.inserted_id)
 
 
-def list_messages(conversation_id: Optional[str] = None, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_messages(conversation_id: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     db = get_db()
     filtro: Dict[str, Any] = {}
     if conversation_id:
         filtro["conversation_id"] = str(conversation_id)
     if user_id:
         filtro["user_id"] = str(user_id)
+    if session_id:
+        filtro["session_id"] = str(session_id)
     projection = {"_id": 0}
     return list(db[COLLECTION].find(filtro, projection).sort("created_at", 1))

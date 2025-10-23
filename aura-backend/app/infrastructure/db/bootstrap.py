@@ -325,17 +325,11 @@ def ensure_collections() -> None:
     # Conversations (chat)
     conversations_validator = {
         "bsonType": "object",
-        "required": [
-            "user_id",
-            "title",
-            "status",
-            "model",
-            "last_message_at",
-            "created_at",
-            "updated_at",
-        ],
+        "required": ["title", "status", "model", "last_message_at", "created_at", "updated_at"],
         "properties": {
-            "user_id": {"bsonType": "string", "minLength": 10},
+            "user_id": {"bsonType": ["string", "null"]},
+            "session_id": {"bsonType": ["string", "null"]},
+            "mode": {"bsonType": ["string", "null"], "enum": ["auth", "guest", None]},
             "title": {"bsonType": "string"},
             "status": {"bsonType": "string", "enum": ["active", "archived"]},
             "model": {"bsonType": "string"},
@@ -346,6 +340,10 @@ def ensure_collections() -> None:
             "updated_at": {"bsonType": "string", "minLength": 10},
         },
         "additionalProperties": True,
+        "anyOf": [
+            {"required": ["user_id"]},
+            {"required": ["session_id"]},
+        ],
     }
     _collmod_or_create("conversations", conversations_validator)
     _ensure_indexes(
@@ -353,16 +351,18 @@ def ensure_collections() -> None:
         [
             {"keys": [("user_id", 1), ("updated_at", -1)], "name": "ix_conv_user_updated"},
             {"keys": [("user_id", 1), ("status", 1), ("updated_at", -1)], "name": "ix_conv_user_status"},
+            {"keys": [("session_id", 1), ("updated_at", -1)], "name": "ix_conv_session_updated"},
         ],
     )
 
     # Messages (chat)
     messages_validator = {
         "bsonType": "object",
-        "required": ["conversation_id", "user_id", "role", "content", "created_at"],
+        "required": ["conversation_id", "role", "content", "created_at"],
         "properties": {
             "conversation_id": {"bsonType": "string", "minLength": 10},
-            "user_id": {"bsonType": "string", "minLength": 10},
+            "user_id": {"bsonType": ["string", "null"]},
+            "session_id": {"bsonType": ["string", "null"]},
             "role": {"bsonType": "string", "enum": ["user", "assistant", "system", "tool"]},
             "content": {"bsonType": "string"},
             "attachments": {"bsonType": "array", "items": {"bsonType": "string"}},
@@ -374,6 +374,10 @@ def ensure_collections() -> None:
             "created_at": {"bsonType": "string", "minLength": 10},
         },
         "additionalProperties": True,
+        "anyOf": [
+            {"required": ["user_id"]},
+            {"required": ["session_id"]},
+        ],
     }
     _collmod_or_create("messages", messages_validator)
     _ensure_indexes(
@@ -381,6 +385,7 @@ def ensure_collections() -> None:
         [
             {"keys": [("conversation_id", 1), ("created_at", 1)], "name": "ix_msg_conv_created"},
             {"keys": [("user_id", 1), ("created_at", -1)], "name": "ix_msg_user_created"},
+            {"keys": [("session_id", 1), ("created_at", 1)], "name": "ix_msg_session_created"},
         ],
     )
 

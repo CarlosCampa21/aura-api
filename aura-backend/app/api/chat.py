@@ -1,7 +1,7 @@
 """
 Endpoints para chat conversacional (conversations/messages).
 """
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, HTTPException, status, Query, Header, Request
 from typing import Optional
 from app.domain.chat.schemas import (
     ConversationCreate,
@@ -23,6 +23,7 @@ from app.repositories.auth_repository import get_user_by_id
 from app.repositories.note_repo import insert_note as insert_note_doc
 from fastapi.responses import StreamingResponse
 from app.core.config import settings
+from app.services import rate_limit
 from app.services import ask_service
 
 
@@ -51,9 +52,9 @@ def create_conversation(payload: ConversationCreate):
 
 
 @router.get("/conversations", response_model=dict)
-def get_conversations(user_id: Optional[str] = Query(default=None), status_f: Optional[str] = Query(default=None)):
+def get_conversations(user_id: Optional[str] = Query(default=None), status_f: Optional[str] = Query(default=None), session_id: Optional[str] = Query(default=None)):
     try:
-        items = repo_list_conversations(user_id=user_id, status=status_f)
+        items = repo_list_conversations(user_id=user_id, status=status_f, session_id=session_id)
         return {"conversations": items}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"List conversations failed: {e}")
@@ -85,18 +86,19 @@ def create_message(payload: MessageCreate):
 def get_messages(
     conversation_id: Optional[str] = Query(default=None),
     user_id: Optional[str] = Query(default=None),
+    session_id: Optional[str] = Query(default=None),
 ):
-    if not conversation_id and not user_id:
-        raise HTTPException(status_code=400, detail="conversation_id o user_id es requerido")
+    if not conversation_id and not user_id and not session_id:
+        raise HTTPException(status_code=400, detail="conversation_id, user_id o session_id es requerido")
     try:
-        items = repo_list_messages(conversation_id=conversation_id, user_id=user_id)
+        items = repo_list_messages(conversation_id=conversation_id, user_id=user_id, session_id=session_id)
         return {"messages": items}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"List messages failed: {e}")
 
 
 @router.post("/ask", status_code=status.HTTP_201_CREATED, response_model=dict)
-def chat_ask(payload: ChatAskPayload):
+def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[str] = Header(default=None)):
     """
     Orquesta la interacción de chat:
       - Crea conversación si falta (opcional)
@@ -109,6 +111,27 @@ def chat_ask(payload: ChatAskPayload):
         conversation_id = payload.conversation_id
         # Determina modelo efectivo
         effective_model = payload.model or (settings.openai_model_primary if settings.openai_api_key else f"ollama:{settings.ollama_model}")
+        # Guest/Auth mode
+        user = None
+        if payload.user_id:
+            try:
+                user = get_user_by_id(payload.user_id)
+            except Exception:
+                user = None
+        mode = "auth" if user else "guest"
+        session_id = payload.session_id or x_session_id
+        if mode == "guest":
+            # Rate limit más estricto y session id requerido
+            if not session_id:
+                # permite operar, pero sugiere al front guardarlo
+                import uuid
+                session_id = str(uuid.uuid4())
+            if not rate_limit.allow((session_id, "/chat/ask"), limit=10, window_seconds=60):
+                raise HTTPException(status_code=429, detail="Demasiadas solicitudes (invitado). Intenta más tarde.")
+        else:
+            uid_key = f"user:{payload.user_id}:{request.client.host if request.client else ''}"
+            if not rate_limit.allow((uid_key, "/chat/ask"), limit=30, window_seconds=60):
+                raise HTTPException(status_code=429, detail="Demasiadas solicitudes. Intenta más tarde.")
         if not conversation_id:
             if not payload.create_if_missing:
                 raise HTTPException(status_code=400, detail="conversation_id requerido cuando create_if_missing=false")
@@ -116,6 +139,8 @@ def chat_ask(payload: ChatAskPayload):
                 "user_id": payload.user_id,
                 "model": effective_model,
                 "title": payload.content[:80] if payload.content else "",
+                "session_id": session_id,
+                "mode": mode,
             })
 
         # Mensaje del usuario
@@ -125,16 +150,11 @@ def chat_ask(payload: ChatAskPayload):
             "role": "user",
             "content": payload.content,
             "attachments": [],
+            "session_id": session_id,
         })
 
         # Contexto por email (si existe)
-        email = None
-        try:
-            u = get_user_by_id(payload.user_id)
-            if u and u.get("email"):
-                email = str(u.get("email"))
-        except Exception:
-            pass
+        email = str(user.get("email")) if (user and user.get("email")) else ""
 
         ans = ask_service.ask(email or "", payload.content)
         answer_text = ans.get("respuesta") or "Sin respuesta"
@@ -146,6 +166,7 @@ def chat_ask(payload: ChatAskPayload):
             "role": "assistant",
             "content": answer_text,
             "attachments": [],
+            "session_id": session_id,
         })
 
         out = ChatAskOut(
@@ -177,6 +198,7 @@ def chat_ask(payload: ChatAskPayload):
                 created_at="",
             ),
             model=effective_model,
+            session_id=session_id,
         ).model_dump()
 
         # Guardado opcional como nota
@@ -202,7 +224,7 @@ def chat_ask(payload: ChatAskPayload):
 
 
 @router.post("/ask/stream")
-def chat_ask_stream(payload: ChatAskPayload):
+def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Optional[str] = Header(default=None)):
     """
     Variante con SSE (Server-Sent Events). Emite el texto del asistente en `data:` por chunks.
     Al finalizar, inserta el mensaje del asistente completo y opcionalmente una nota.
@@ -210,6 +232,24 @@ def chat_ask_stream(payload: ChatAskPayload):
     try:
         conversation_id = payload.conversation_id
         effective_model = payload.model or (settings.openai_model_primary if settings.openai_api_key else f"ollama:{settings.ollama_model}")
+        user = None
+        if payload.user_id:
+            try:
+                user = get_user_by_id(payload.user_id)
+            except Exception:
+                user = None
+        mode = "auth" if user else "guest"
+        session_id = payload.session_id or x_session_id
+        if mode == "guest":
+            if not session_id:
+                import uuid
+                session_id = str(uuid.uuid4())
+            if not rate_limit.allow((session_id, "/chat/ask/stream"), limit=8, window_seconds=60):
+                raise HTTPException(status_code=429, detail="Demasiadas solicitudes (invitado). Intenta más tarde.")
+        else:
+            uid_key = f"user:{payload.user_id}:{request.client.host if request.client else ''}"
+            if not rate_limit.allow((uid_key, "/chat/ask/stream"), limit=20, window_seconds=60):
+                raise HTTPException(status_code=429, detail="Demasiadas solicitudes. Intenta más tarde.")
         if not conversation_id:
             if not payload.create_if_missing:
                 raise HTTPException(status_code=400, detail="conversation_id requerido cuando create_if_missing=false")
@@ -217,6 +257,8 @@ def chat_ask_stream(payload: ChatAskPayload):
                 "user_id": payload.user_id,
                 "model": effective_model,
                 "title": payload.content[:80] if payload.content else "",
+                "session_id": session_id,
+                "mode": mode,
             })
 
         # Inserta mensaje del usuario
@@ -226,6 +268,7 @@ def chat_ask_stream(payload: ChatAskPayload):
             "role": "user",
             "content": payload.content,
             "attachments": [],
+            "session_id": session_id,
         })
 
         # Prepara respuesta completa (sin streaming real del proveedor, se chunkea localmente)
@@ -258,6 +301,7 @@ def chat_ask_stream(payload: ChatAskPayload):
                 "role": "assistant",
                 "content": full_text,
                 "attachments": [],
+                "session_id": session_id,
             })
             if payload.save_note:
                 try:

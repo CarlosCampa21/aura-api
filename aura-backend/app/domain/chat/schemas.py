@@ -21,17 +21,19 @@ class ConversationCreate(BaseModel):
     - `metadata`: metadatos libres (p. ej., subject_id, tags).
     """
 
-    user_id: str
+    user_id: Optional[str] = None
     title: Optional[str] = None
     model: Optional[str] = Field(default="gpt-4o-mini")
     settings: Optional[Dict] = None
     metadata: Optional[Dict] = None
+    session_id: Optional[str] = None  # modo invitado
+    mode: Optional[Literal["auth", "guest"]] = None
 
 
 class ConversationOut(BaseModel):
     """Salida pública de conversación (sin `_id`)."""
 
-    user_id: str
+    user_id: Optional[str] = None
     title: str
     status: Literal["active", "archived"]
     model: str
@@ -40,21 +42,24 @@ class ConversationOut(BaseModel):
     last_message_at: str
     created_at: str
     updated_at: str
+    # Opcional para invitados
+    # Nota: no exponemos `_id` en los listados
 
 
 class MessageCreate(BaseModel):
     """Crear un mensaje dentro de una conversación."""
 
     conversation_id: str
-    user_id: str
+    user_id: Optional[str] = None
     role: Literal["user", "assistant", "system", "tool"]
     content: str
     attachments: List[str] = Field(default_factory=list)
+    session_id: Optional[str] = None
 
 
 class MessageOut(BaseModel):
     conversation_id: str
-    user_id: str
+    user_id: Optional[str] = None
     role: Literal["user", "assistant", "system", "tool"]
     content: str
     attachments: List[str] = Field(default_factory=list)
@@ -64,12 +69,13 @@ class MessageOut(BaseModel):
     tokens_output: Optional[int] = None
     error: Optional[Dict] = None
     created_at: str
+    session_id: Optional[str] = None
 
 
 class ChatAskPayload(BaseModel):
     """Payload de orquestación de chat (alta de conversación y mensajes)."""
 
-    user_id: str
+    user_id: Optional[str] = None
     content: str
     conversation_id: Optional[str] = None
     model: Optional[str] = None
@@ -80,6 +86,7 @@ class ChatAskPayload(BaseModel):
     save_note: bool = False
     note_title: Optional[str] = None
     note_tags: List[str] = Field(default_factory=list)
+    session_id: Optional[str] = None  # para modo invitado
 
 
 class ChatAskOut(BaseModel):
@@ -87,3 +94,4 @@ class ChatAskOut(BaseModel):
     user_message: MessageOut
     assistant_message: MessageOut
     model: Optional[str] = None
+    session_id: Optional[str] = None
