@@ -1,5 +1,10 @@
 # app/core/config.py
 from pydantic_settings import BaseSettings
+try:
+    # pydantic-settings v2 style
+    from pydantic_settings import SettingsConfigDict  # type: ignore
+except Exception:  # pragma: no cover
+    SettingsConfigDict = None  # type: ignore
 from pathlib import Path
 
 # Resolve the .env located at the backend root regardless of CWD
@@ -16,6 +21,15 @@ class Settings(BaseSettings):
     # Mongo
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db: str = "aura_db"
+    # TLS relax options (dev only)
+    mongo_tls_insecure: bool = False  # allows invalid certs
+    mongo_tls_allow_invalid_hostnames: bool = False
+
+    # Auth / JWT
+    jwt_secret: str | None = None
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 30
 
     # OpenAI
     openai_api_key: str | None = None
@@ -27,6 +41,7 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
     ollama_timeout_seconds: int = 120
 
+<<<<<<< HEAD
     # Auth / JWT
     jwt_secret: str = "change-me-dev-secret"
     jwt_algorithm: str = "HS256"
@@ -60,5 +75,36 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = str(ENV_FILE)   # carga variables del backend, sin depender del CWD
+=======
+    # Google OAuth (web client id)
+    google_client_id: str | None = None
+
+    # SMTP / Email
+    smtp_host: str | None = None
+    smtp_port: int | None = None
+    smtp_user: str | None = None
+    smtp_pass: str | None = None
+    smtp_from_email: str | None = None
+    smtp_from_name: str | None = None
+    smtp_use_tls: bool = True
+
+    # Email verification
+    email_code_expire_minutes: int = 10
+    email_verify_link_base: str | None = None
+
+    # pydantic-settings configuration (v2)
+    if SettingsConfigDict is not None:
+        model_config = SettingsConfigDict(
+            env_file=str(ENV_FILE),
+            env_file_encoding="utf-8",
+            case_sensitive=False,
+            extra="ignore",  # no fallar si hay variables no usadas
+        )
+    else:
+        # Back-compat for older pydantic-settings
+        class Config:  # type: ignore
+            env_file = str(ENV_FILE)
+            case_sensitive = False
+>>>>>>> 53ff96f (fix: conf vairables entorno)
 
 settings = Settings()
