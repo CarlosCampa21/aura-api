@@ -40,14 +40,6 @@ class Settings(BaseSettings):
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
     ollama_timeout_seconds: int = 120
-
-<<<<<<< HEAD
-    # Auth / JWT
-    jwt_secret: str = "change-me-dev-secret"
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 15
-    refresh_token_expire_days: int = 30
-
     # Google OAuth
     google_client_id: str | None = None
 
@@ -60,10 +52,9 @@ class Settings(BaseSettings):
     smtp_from_name: str = "AURA"
     smtp_use_tls: bool = True
 
-    # Link base para verificación de email (se le concatena el token)
-    email_verify_link_base: str = "http://localhost:8000/api/auth/verify-email?token="
-    # Verificación por código (OTP) – expiración corta
+    # Verificación por código (OTP) y link base
     email_code_expire_minutes: int = 10
+    email_verify_link_base: str = "http://localhost:8000/api/auth/verify-email?token="
 
     # Chat limits / rate limit (configurable)
     chat_guest_rate_per_min: int = 10
@@ -72,26 +63,6 @@ class Settings(BaseSettings):
     chat_auth_stream_rate_per_min: int = 20
     chat_prompt_max_chars_guest: int = 800
     chat_prompt_max_chars_auth: int = 4000
-
-    class Config:
-        env_file = str(ENV_FILE)   # carga variables del backend, sin depender del CWD
-=======
-    # Google OAuth (web client id)
-    google_client_id: str | None = None
-
-    # SMTP / Email
-    smtp_host: str | None = None
-    smtp_port: int | None = None
-    smtp_user: str | None = None
-    smtp_pass: str | None = None
-    smtp_from_email: str | None = None
-    smtp_from_name: str | None = None
-    smtp_use_tls: bool = True
-
-    # Email verification
-    email_code_expire_minutes: int = 10
-    email_verify_link_base: str | None = None
-
     # pydantic-settings configuration (v2)
     if SettingsConfigDict is not None:
         model_config = SettingsConfigDict(
@@ -105,6 +76,6 @@ class Settings(BaseSettings):
         class Config:  # type: ignore
             env_file = str(ENV_FILE)
             case_sensitive = False
->>>>>>> 53ff96f (fix: conf vairables entorno)
+
 
 settings = Settings()
