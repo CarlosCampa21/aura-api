@@ -4,7 +4,7 @@ import requests
 from app.infrastructure.ai.ollama_client import ollama_ask
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.infrastructure.db.mongo import init_mongo
+from app.infrastructure.db.mongo import init_mongo, db_ready
 from app.infrastructure.db.bootstrap import ensure_collections
 from app.api.router import api_router
 
@@ -23,8 +23,15 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     init_mongo()
-    # Garantiza colecciones/índices/validadores mínimos
-    ensure_collections()
+    # Garantiza colecciones/índices/validadores mínimos si hay conexión
+    try:
+        if db_ready():
+            ensure_collections()
+        else:
+            print("[Startup][WARN] Mongo no listo; omitiendo ensure_collections()", flush=True)
+    except Exception as e:
+        # No impedir el arranque si fallan validadores/índices
+        print(f"[Startup][WARN] ensure_collections() falló: {e}", flush=True)
 
 # Health / Ping
 @app.get("/ping")

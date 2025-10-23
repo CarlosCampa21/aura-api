@@ -15,9 +15,12 @@ def init_mongo():
     global _client, _db
     uri = settings.mongo_uri
     try:
-        # No forzar opciones TLS cuando es SRV (Atlas maneja TLS automáticamente)
-        kwargs = dict(serverSelectionTimeoutMS=10000)
-        if not uri.startswith("mongodb+srv://"):
+        # Ajustes conservadores: 15s y CA de certifi incluso con SRV
+        kwargs = dict(serverSelectionTimeoutMS=15000)
+        if uri.startswith("mongodb+srv://"):
+            # SRV ya implica TLS; proveemos CA bundle para robustez
+            kwargs["tlsCAFile"] = certifi.where()
+        else:
             kwargs["tls"] = True
             kwargs["tlsCAFile"] = certifi.where()
             kwargs["tlsAllowInvalidCertificates"] = bool(
@@ -30,8 +33,16 @@ def init_mongo():
         _client = MongoClient(uri, **kwargs)
         _client.admin.command("ping")
         _db = _client[settings.mongo_db]
+        print("[Mongo] Conectado correctamente", flush=True)
     except ServerSelectionTimeoutError as e:
-        raise RuntimeError(f"Mongo no accesible: {e}")
+        # No tumbar la app: deja _db en None y loggea
+        print(f"[Mongo][WARN] No accesible (timeout): {e}", flush=True)
+        _client = None
+        _db = None
+    except Exception as e:
+        print(f"[Mongo][WARN] Error de conexión: {e}", flush=True)
+        _client = None
+        _db = None
 
 def get_db():
     """
@@ -39,5 +50,8 @@ def get_db():
     Úsalo en repositorios/servicios, no en routers.
     """
     if _db is None:
-        raise RuntimeError("Mongo no inicializado. Llama init_mongo() en startup.")
+        raise RuntimeError("Mongo no inicializado. Intenta más tarde.")
     return _db
+
+def db_ready() -> bool:
+    return _db is not None
