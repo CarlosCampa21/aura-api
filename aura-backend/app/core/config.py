@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str | None = None
-    openai_model_primary: str = "gpt-5-nano"
+    openai_model_primary: str = "gpt-4o-mini"
     openai_model_fallback: str = "gpt-4o-mini"
 
     # Ollama

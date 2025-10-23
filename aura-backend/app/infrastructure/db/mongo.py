@@ -13,16 +13,21 @@ def init_mongo():
     Llamar una sola vez en el startup de FastAPI.
     """
     global _client, _db
+    uri = settings.mongo_uri
     try:
-        # Usar el bundle de CA de certifi para evitar problemas de TLS/SSL con Atlas
-        _client = MongoClient(
-            settings.mongo_uri,
-            serverSelectionTimeoutMS=3000,
-            tls=True,
-            tlsCAFile=certifi.where(),
-            tlsAllowInvalidCertificates=bool(getattr(settings, "mongo_tls_insecure", False)),
-            tlsAllowInvalidHostnames=bool(getattr(settings, "mongo_tls_allow_invalid_hostnames", False)),
-        )
+        # No forzar opciones TLS cuando es SRV (Atlas maneja TLS automáticamente)
+        kwargs = dict(serverSelectionTimeoutMS=10000)
+        if not uri.startswith("mongodb+srv://"):
+            kwargs["tls"] = True
+            kwargs["tlsCAFile"] = certifi.where()
+            kwargs["tlsAllowInvalidCertificates"] = bool(
+                getattr(settings, "mongo_tls_insecure", False)
+            )
+            kwargs["tlsAllowInvalidHostnames"] = bool(
+                getattr(settings, "mongo_tls_allow_invalid_hostnames", False)
+            )
+
+        _client = MongoClient(uri, **kwargs)
         _client.admin.command("ping")
         _db = _client[settings.mongo_db]
     except ServerSelectionTimeoutError as e:
