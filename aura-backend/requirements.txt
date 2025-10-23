@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 pymongo
+certifi
 pydantic-settings
 python-dotenv
 requests
