@@ -10,7 +10,7 @@ PY := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; \
 		elif command -v python3 >/dev/null 2>&1; then echo python3; \
 		else echo python; fi)
 
-.PHONY: run install venv311 seed
+.PHONY: run install venv311 seed seed_ids9_tm
 
 run:
 	@PYTHON=$(PY) bash scripts/run_backend.sh
@@ -26,4 +26,7 @@ venv311:
 	@echo "Run: source .venv/bin/activate"
 
 seed:
-	@PYTHONPATH="$(BACKEND_DIR)" $(PY) "$(BACKEND_DIR)/scripts/seed.py"
+	@echo "No default seed script. Use 'make seed_ids9_tm' or run the script directly."
+
+seed_ids9_tm:
+	@PYTHONPATH="$(BACKEND_DIR)" $(PY) "$(BACKEND_DIR)/scripts/seed_ids9_tm_2025II.py"

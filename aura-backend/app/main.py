@@ -7,6 +7,9 @@ from app.core.config import settings
 from app.infrastructure.db.mongo import init_mongo, db_ready
 from app.infrastructure.db.bootstrap import ensure_collections
 from app.api.router import api_router
+from zoneinfo import ZoneInfo
+from datetime import datetime
+from app.infrastructure.db.mongo import get_db
 
 app = FastAPI(title=settings.app_name)
 
@@ -87,4 +90,26 @@ def debug_ollama(sample: str = "Hola, ¿quién eres?"):
         return {"ok": True, "response": text}
     except Exception as e:
         return {"ok": False, "error": str(e)}
-    
+
+@app.get("/_debug/now", status_code=status.HTTP_200_OK)
+def debug_now(email: str | None = None, tz: str | None = None):
+    """
+    Devuelve la hora del servidor y, si hay email o tz, la hora resuelta
+    para esa zona horaria (usando profile.tz cuando email está presente).
+    """
+    server_now = datetime.now().isoformat()
+    resolved_tz = tz
+    user_now = None
+    if email:
+        try:
+            u = get_db()["user"].find_one({"email": email}, {"profile": 1}) or {}
+            p = (u or {}).get("profile") or {}
+            resolved_tz = resolved_tz or p.get("tz")
+        except Exception:
+            pass
+    try:
+        if resolved_tz:
+            user_now = datetime.now(ZoneInfo(resolved_tz)).isoformat()
+    except Exception as e:
+        user_now = f"Invalid tz: {resolved_tz} ({e})"
+    return {"server_now": server_now, "tz": resolved_tz, "user_now": user_now}

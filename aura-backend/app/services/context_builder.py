@@ -16,6 +16,7 @@ def build_academic_context(user_email: str) -> str:
         program_code = (prof.get("major") or "").upper() or None
         semester = prof.get("semester") or None
         shift = prof.get("shift") or None  # "TM"/"TV" si existe
+        group = prof.get("group") or None
 
         timetable = None
         if program_code and semester:
@@ -28,6 +29,8 @@ def build_academic_context(user_email: str) -> str:
             }
             if shift:
                 q["shift"] = shift
+            if group:
+                q["group"] = group
             timetable = db["timetable"].find_one(q, {"_id": 1, "title": 1})
 
         entries = []

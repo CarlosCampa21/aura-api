@@ -24,6 +24,7 @@ class UserProfile(BaseModel):
     major: Optional[str] = None  # e.g., IDS, ITC, IC, LATI, LITI
     semester: Optional[int] = Field(default=None, ge=1)
     shift: Optional[str] = None  # TM, TV
+    group: Optional[str] = None  # e.g., A, B
     tz: Optional[str] = None  # America/Mazatlan
     phone: Optional[str] = None
     birthday: Optional[str] = None  # ISO date (YYYY-MM-DD)
@@ -39,6 +40,7 @@ class UserProfileUpdate(BaseModel):
     major: Optional[str] = None
     semester: Optional[int] = Field(default=None, ge=1)
     shift: Optional[str] = None
+    group: Optional[str] = None
     tz: Optional[str] = None
     phone: Optional[str] = None
     birthday: Optional[str] = None
