@@ -1,0 +1,37 @@
+Inicializar Aura API (desarrollo)
+================================
+
+Primera vez (clonado nuevo)
+- Clonar evitando la “doble carpeta”:
+  - `git clone <URL_DEL_REPO> aura-api`
+  - o dentro de carpeta vacía: `git clone <URL_DEL_REPO> .`
+- Entrar al repo: `cd aura-api`
+- Crear entorno virtual local:
+  - macOS/Linux: `python3.11 -m venv .venv` (si no tienes 3.11 usa `python3`)
+  - Activar: `source .venv/bin/activate`
+- Instalar dependencias:
+  - `pip install -U pip`
+  - `pip install -r requirements.txt`
+- Variables de entorno (.env en la raíz):
+  - `cp .env.example .env` y edita los valores. No subas `.env` a git.
+
+Arrancar el servidor
+- Con autoreload (desarrollo): `make run`
+- Sin autoreload: `RELOAD=false make run`
+- Alternativa directa: `python -m uvicorn app.main:app --reload --port 8000`
+
+Uso diario (después de la primera vez)
+- Actualizar código: `git pull`
+- Activar el venv si no está activo: `source .venv/bin/activate`
+- Ejecutar: `make run`
+- Si cambian dependencias: `pip install -r requirements.txt`
+
+Seeds y utilidades
+- Semilla ejemplo: `make seed_ids9_tm`
+
+VS Code
+- Seleccionar intérprete: `Python: Select Interpreter` → `${workspaceFolder}/.venv/bin/python`
+
+Notas
+- El servidor expone por defecto: `http://127.0.0.1:8000`
+- CORS por defecto permite `http://localhost:5173` (Vite). Ajusta en `app/core/config.py` si es necesario.

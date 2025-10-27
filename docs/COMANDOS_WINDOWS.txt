@@ -1,0 +1,58 @@
+Inicializar Aura API en Windows
+===============================
+
+Requisitos
+- Windows 10/11
+- Python 3.11 instalado (Microsoft Store o python.org)
+- Git instalado (opcional VS Code)
+
+Notas rápidas
+- El Makefile y el script bash están pensados para macOS/Linux. 
+  En Windows usa PowerShell con los comandos directos que se indican abajo. 
+  Si prefieres usar `make`/bash, ejecuta desde Git Bash o WSL.
+
+1) Clonar el repo
+- PowerShell (elige el nombre de carpeta):
+  git clone <URL_DEL_REPO> aura-api
+  cd aura-api
+
+2) Crear y activar el entorno virtual
+- Crear venv (elige uno):
+  py -3.11 -m venv .venv
+  # o
+  python -m venv .venv
+- Activar venv:
+  .\.venv\Scripts\Activate.ps1
+- Si PowerShell bloquea scripts:
+  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+  # Cierra y abre PowerShell y activa de nuevo
+
+3) Instalar dependencias
+  python -m pip install -U pip
+  python -m pip install -r requirements.txt
+
+4) Configurar variables de entorno
+- Copiar el ejemplo y editar:
+  copy .env.example .env
+- Abre `.env` y ajusta credenciales (MongoDB, JWT, OpenAI/Ollama, SMTP, etc.).
+
+5) Ejecutar el servidor
+- Opción PowerShell (recomendada en Windows):
+  python -m uvicorn app.main:app --reload --port 8000
+- Opción Git Bash/WSL (si quieres autorecarga por watchfiles y usar Makefile):
+  make run
+
+6) Verificar
+- Abrir: http://127.0.0.1:8000/ping  → debe responder {"message":"pong"}
+
+Consejos
+- VS Code → Python Interpreter: selecciona `.venv\Scripts\python.exe`.
+- Puerto ocupado: cambia `--port 8010` u otro.
+- uvicorn[standard]: en Windows no se usa `uvloop` (solo Linux/macOS). Para desarrollo no afecta.
+
+Comandos diarios (después de la primera vez)
+- Activar venv: .\.venv\Scripts\Activate.ps1
+- Actualizar repo: git pull
+- Ejecutar: python -m uvicorn app.main:app --reload --port 8000
+- Si cambian dependencias: python -m pip install -r requirements.txt
+
