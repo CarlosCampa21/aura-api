@@ -5,8 +5,8 @@ Seed: IDS 9° semestre, turno matutino (TM), periodo 2025-II
 Inserta catálogos mínimos, crea un timetable is_current y registra
 entradas SOLO del bloque matutino (07:00-11:30) según la imagen.
 
-Ejecución sugerida desde repo Back-Aura/:
-  PYTHONPATH=aura-backend python aura-backend/scripts/seed_ids9_tm_2025II.py
+Ejecución sugerida desde la raíz del repo (aura-api):
+  PYTHONPATH=. python scripts/seed_ids9_tm_2025II.py
 """
 from __future__ import annotations
 
@@ -132,4 +132,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

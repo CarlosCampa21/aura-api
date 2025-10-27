@@ -1,12 +1,11 @@
 SHELL := /bin/bash
 
-# Paths (Makefile lives in Back-Aura/)
+# Paths (Makefile lives at repo root)
 ROOT_DIR := $(shell pwd)
-BACKEND_DIR := $(ROOT_DIR)/aura-backend
+BACKEND_DIR := $(ROOT_DIR)
 
 # Prefer repo venv's python if available; fallback to python3/python
 PY := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; \
-		elif [ -x ../.venv/bin/python ]; then echo ../.venv/bin/python; \
 		elif command -v python3 >/dev/null 2>&1; then echo python3; \
 		else echo python; fi)
 

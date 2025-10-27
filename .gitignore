@@ -1,7 +1,6 @@
 
 .env
 *.env
-aura-backend/.env
 __pycache__/
 *.pyc
 .venv/

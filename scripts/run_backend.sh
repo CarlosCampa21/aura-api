@@ -8,10 +8,10 @@ set -euo pipefail
 # - Runs uvicorn pointing to the backend app dir
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKEND_DIR="$ROOT_DIR/aura-backend"
+BACKEND_DIR="$ROOT_DIR"
 
 if [[ ! -d "$BACKEND_DIR/app" ]]; then
-  echo "Backend directory not found at: $BACKEND_DIR" >&2
+  echo "Backend directory not found at: $BACKEND_DIR/app" >&2
   exit 1
 fi
 
@@ -21,10 +21,6 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
     echo "Activating venv: $ROOT_DIR/.venv"
     # shellcheck disable=SC1091
     source "$ROOT_DIR/.venv/bin/activate"
-  elif [[ -f "$(dirname "$ROOT_DIR")/.venv/bin/activate" ]]; then
-    echo "Activating venv: $(dirname "$ROOT_DIR")/.venv"
-    # shellcheck disable=SC1091
-    source "$(dirname "$ROOT_DIR")/.venv/bin/activate"
   fi
 fi
 
@@ -33,8 +29,6 @@ PY="${PYTHON:-python}"
 if ! command -v "$PY" >/dev/null 2>&1; then
   if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
     PY="$ROOT_DIR/.venv/bin/python"
-  elif [[ -x "$(dirname "$ROOT_DIR")/.venv/bin/python" ]]; then
-    PY="$(dirname "$ROOT_DIR")/.venv/bin/python"
   else
     echo "Python not found in PATH. Ensure a venv is activated or create one with 'make venv311'." >&2
     exit 1
@@ -45,9 +39,6 @@ fi
 case "$PY" in
   .venv/*)
     PY="$ROOT_DIR/$PY"
-    ;;
-  ../.venv/*)
-    PY="$(dirname "$ROOT_DIR")/${PY#../}"
     ;;
 esac
 
@@ -77,7 +68,12 @@ if ! $PY -c "import uvicorn" >/dev/null 2>&1; then
 fi
 
 PORT="${PORT:-8000}"
+RELOAD="${RELOAD:-true}"
 echo "Running backend on http://127.0.0.1:$PORT"
 echo "Working dir: $BACKEND_DIR (ensures .env is loaded)"
 cd "$BACKEND_DIR"
-exec "$PY" -m uvicorn app.main:app --reload --port "$PORT"
+if [[ "$RELOAD" == "true" ]]; then
+  exec "$PY" -m uvicorn app.main:app --reload --port "$PORT"
+else
+  exec "$PY" -m uvicorn app.main:app --port "$PORT"
+fi
