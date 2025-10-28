@@ -13,12 +13,6 @@ from pydantic import BaseModel, Field, field_validator
 Day = Literal["mon", "tue", "wed", "thu", "fri", "sat"]
 
 
-class Program(BaseModel):
-    department_code: str = Field(default="DASC")
-    code: str  # IDS, ITC, LITI, IC
-    name: Optional[str] = None
-
-
 class DepartmentCreate(BaseModel):
     code: str  # DASC
     name: str
@@ -146,4 +140,3 @@ class TimetableEntryOut(BaseModel):
     notes: Optional[str] = None
     created_at: str
     updated_at: str
-
