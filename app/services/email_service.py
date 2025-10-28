@@ -11,7 +11,7 @@ import string
 from app.core.config import settings
 
 # Reutilizamos PyJWT vía token_service para mantener una sola dependencia
-from app.services.token_service import pyjwt as _jwt
+from app.infrastructure.security.token_service import pyjwt as _jwt
 
 
 def _now_utc():

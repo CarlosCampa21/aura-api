@@ -14,7 +14,7 @@ from openai import BadRequestError
 from app.core.config import settings
 from app.infrastructure.ai.openai_client import get_openai
 from app.services.schedule_service import get_schedule_answer
-from app.services.time_service import now_text
+from app.core.time import now_text
 
 
 def answer_with_tools(user_email: str, question: str, academic_context: str) -> Optional[str]:

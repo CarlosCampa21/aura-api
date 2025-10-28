@@ -8,7 +8,7 @@ Endpoints para consultar y actualizar el perfil del usuario autenticado.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from app.services.auth_validator import get_current_user
+from app.api.deps import get_current_user
 from app.api.schemas.user import UserProfileUpdate
 from app.services import profile_service
 

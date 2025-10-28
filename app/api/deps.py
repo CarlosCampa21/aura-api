@@ -1,11 +1,14 @@
 """
-Dependencias y utilidades para validar access tokens y cargar usuario actual.
-"""
-from fastapi import Depends, HTTPException, Header
-from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
-from typing import Optional, Dict, Any
+Dependencias reutilizables para routers (FastAPI Depends).
 
-from app.services.token_service import verify_access_token
+- Autenticación: extrae y valida Access Token, devuelve el usuario actual.
+- Mantener esta capa delgada: sin lógica de negocio pesada.
+"""
+from typing import Optional, Dict, Any
+from fastapi import HTTPException, Header
+from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
+
+from app.infrastructure.security.token_service import verify_access_token
 from app.repositories import auth_repository as repo
 
 
@@ -39,8 +42,7 @@ def get_current_user(authorization: Optional[str] = Header(default=None)) -> Dic
 def get_current_user_loose(authorization: Optional[str] = Header(default=None)) -> Dict[str, Any]:
     """
     Igual que get_current_user pero sin exigir is_active ni email_verified.
-    Útil para endpoints que deben funcionar para usuarios recién registrados
-    (p. ej., chat) aunque aún no verifiquen el correo.
+    Útil para endpoints que deben funcionar para usuarios recién registrados.
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Falta token")
@@ -61,3 +63,4 @@ def get_current_user_loose(authorization: Optional[str] = Header(default=None)) 
     if u.get("token_version", 0) != token_version:
         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token expirado")
     return u
+

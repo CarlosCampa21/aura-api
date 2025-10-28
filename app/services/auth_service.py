@@ -11,11 +11,13 @@ from argon2.low_level import Type
 
 from app.core.config import settings
 from app.repositories import auth_repository as repo
-from app.services.token_service import create_access_token
+from app.infrastructure.security.token_service import create_access_token
 
 # Nuevos imports para casos de uso de registro/verificación
 from app.repositories.user_repo import insert_user
-from app.services import email_service, token_service, google_oauth
+from app.services import email_service
+from app.infrastructure.security import token_service
+from app.infrastructure.http import google_oauth
 
 # Esquemas de la capa de dominio (auth)
 from app.api.schemas.auth import (
@@ -236,7 +238,7 @@ def verify_email_link(*, token: str) -> Dict[str, Any]:
     """
     Verifica email usando un token firmado (invocado desde link en correo).
     """
-    from app.services.token_service import pyjwt as _jwt
+    from app.infrastructure.security.token_service import pyjwt as _jwt
     payload = _jwt.decode(token, key=settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     if payload.get("purpose") != "email_verify":
         raise ValueError("Token inválido")

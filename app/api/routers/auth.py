@@ -20,8 +20,8 @@ from app.api.schemas.auth import (
 
 # Servicios: lógica de negocio (hashing, tokens, repos, correo)
 from app.services import auth_service as service
-from app.services.auth_validator import get_current_user
-from app.services import rate_limit
+from app.api.deps import get_current_user
+from app.core import rate_limit
 from app.repositories import auth_repository as repo
 # Nota: token_service se usa dentro de los servicios; la API no lo necesita directamente.
 
