@@ -9,10 +9,32 @@ PY := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; \
 		elif command -v python3 >/dev/null 2>&1; then echo python3; \
 		else echo python; fi)
 
-.PHONY: run install venv311 seed seed_ids9_tm
+.PHONY: help run run-prod check install venv311 seed seed_ids9_tm
+
+help:
+	@echo "Targets disponibles:"
+	@echo "  make run        - Ejecuta el backend con reload (desarrollo)"
+	@echo "  make run-prod   - Ejecuta el backend sin reload (producción local)"
+	@echo "  make check      - Verifica /health y /ping en el backend"
+	@echo "  make install    - Instala dependencias del backend"
+	@echo "  make venv311    - Crea un .venv con Python 3.11"
+	@echo "  make seed_ids9_tm - Ejecuta script de seed académico de ejemplo"
 
 run:
 	@PYTHON=$(PY) bash scripts/run_backend.sh
+
+run-prod:
+	@RELOAD=false PYTHON=$(PY) bash scripts/run_backend.sh
+
+# Prefix de la API (por defecto /api). Se puede sobreescribir: make check API_PREFIX=/api
+API_PREFIX ?= /api
+
+check:
+	@echo "Chequeando backend en http://127.0.0.1:8000$(API_PREFIX)"
+	@code=$$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8000$(API_PREFIX)/health"); \
+	 if [ "$$code" = "200" ]; then echo "OK  /health"; else echo "FAIL /health ($$code)"; exit 1; fi
+	@code=$$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8000$(API_PREFIX)/ping"); \
+	 if [ "$$code" = "200" ]; then echo "OK  /ping"; else echo "FAIL /ping ($$code)"; exit 1; fi
 
 install:
 	@$(PY) -m pip install -U pip
