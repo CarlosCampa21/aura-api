@@ -100,14 +100,6 @@ def debug_r2():
         raise HTTPException(status_code=500, detail=f"No se pudo diagnosticar R2: {e}")
 
 
-@router.get("/{doc_id}", response_model=dict, summary="Obtener documento")
-def get(doc_id: str):
-    d = get_document(doc_id)
-    if not d:
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
-    return {"document": d}
-
-
 @router.get("/{doc_id}/open", summary="Abrir documento (redirect a URL pública)")
 def open_document(doc_id: str):
     d = get_document(doc_id)
@@ -115,3 +107,34 @@ def open_document(doc_id: str):
         raise HTTPException(status_code=404, detail="Documento no encontrado")
     # Redirige a la URL pública en R2. Mantiene tu API estable sin exponer claves.
     return RedirectResponse(url=str(d["file_url"]))
+
+
+@router.get("/{doc_id}/download", summary="Descargar documento (URL firmada)")
+def download_document(doc_id: str):
+    d = get_document(doc_id)
+    if not d or not d.get("file_url"):
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    key = r2_storage.derive_key_from_url(str(d["file_url"]))
+    if not key:
+        raise HTTPException(status_code=400, detail="No se pudo derivar la clave del objeto")
+    # Usa el título como nombre sugerido
+    name = str(d.get("title") or "documento.pdf")
+    url = r2_storage.presign_get_url(key, filename=name)
+    return RedirectResponse(url=url)
+
+
+@router.get("/download", summary="Descargar por URL pública (URL firmada)")
+def download_by_url(u: str = Query(..., description="URL pública del objeto en R2")):
+    key = r2_storage.derive_key_from_url(u)
+    if not key:
+        raise HTTPException(status_code=400, detail="URL no válida para R2")
+    url = r2_storage.presign_get_url(key)
+    return RedirectResponse(url=url)
+
+
+@router.get("/{doc_id}", response_model=dict, summary="Obtener documento")
+def get(doc_id: str):
+    d = get_document(doc_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return {"document": d}

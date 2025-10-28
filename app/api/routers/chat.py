@@ -251,6 +251,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
 
         ans = ask_service.ask(email or "", payload.content)
         answer_text = ans.get("respuesta") or "Sin respuesta"
+        attachments_out = ans.get("attachments") or []
 
         # Mensaje del asistente
         asst_msg_id = insert_message({
@@ -258,7 +259,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
             "user_id": payload.user_id,
             "role": "assistant",
             "content": answer_text,
-            "attachments": [],
+            "attachments": attachments_out,
             "session_id": session_id,
         })
 
@@ -282,7 +283,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
                 user_id=payload.user_id,
                 role="assistant",
                 content=answer_text,
-                attachments=[],
+                attachments=attachments_out,
                 citations=[],
                 model_snapshot=effective_model,
                 tokens_input=None,
@@ -388,6 +389,7 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
 
         ans = ask_service.ask(email or "", payload.content)
         full_text = (ans.get("respuesta") or "Sin respuesta").strip()
+        attachments_out = ans.get("attachments") or []
 
         def _gen():
             # Envia “open”
@@ -406,7 +408,7 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
                 "user_id": payload.user_id,
                 "role": "assistant",
                 "content": full_text,
-                "attachments": [],
+                "attachments": attachments_out,
                 "session_id": session_id,
             })
             if payload.save_note:

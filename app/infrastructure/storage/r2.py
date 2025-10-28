@@ -10,6 +10,7 @@ from typing import Optional
 import boto3
 from app.core.config import settings
 from botocore.config import Config
+from urllib.parse import urlparse, unquote
 
 
 def _endpoint_url() -> str:
@@ -48,3 +49,41 @@ def public_base_url() -> Optional[str]:
     if bucket and ep:
         return f"{ep}/{bucket}"
     return None
+
+
+def derive_key_from_url(url: str) -> Optional[str]:
+    """Intenta derivar la clave (key) del objeto a partir de una URL pública.
+
+    Soporta bases con o sin nombre de bucket en la ruta.
+    """
+    if not url:
+        return None
+    base = (public_base_url() or "").rstrip("/")
+    if base and url.startswith(base + "/"):
+        return unquote(url[len(base) + 1 :])
+    # Fallback: parsea el path y, si contiene el bucket, lo recorta
+    p = urlparse(url)
+    path = unquote(p.path or "/").lstrip("/")
+    bucket = settings.r2_bucket or os.getenv("R2_BUCKET") or ""
+    if path.startswith(bucket + "/"):
+        return path[len(bucket) + 1 :]
+    return path or None
+
+
+def presign_get_url(key: str, *, expires: int = 600, filename: Optional[str] = None) -> str:
+    """Genera una URL firmada de lectura con Content-Disposition=attachment.
+
+    Requiere R2_BUCKET configurado.
+    """
+    bucket = settings.r2_bucket or os.getenv("R2_BUCKET")
+    if not bucket:
+        raise RuntimeError("R2_BUCKET no configurado")
+    s3 = get_s3_client()
+    params = {"Bucket": bucket, "Key": key}
+    if filename:
+        params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+    else:
+        params["ResponseContentDisposition"] = "attachment"
+    return s3.generate_presigned_url(
+        ClientMethod="get_object", Params=params, ExpiresIn=int(expires)
+    )

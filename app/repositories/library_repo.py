@@ -55,12 +55,13 @@ def search_documents(query: str, limit: int = 5) -> List[Dict[str, Any]]:
     # Estrategia simple: regex OR en title, aliases, tags
     import re
     regex = re.compile(".*" + re.escape(q).replace("\\ ", ".*?") + ".*", re.IGNORECASE)
+    # Para arrays de strings (aliases/tags) se puede hacer match directo con regex
     filtro = {
         "status": "active",
         "$or": [
             {"title": regex},
-            {"aliases": {"$elemMatch": regex}},
-            {"tags": {"$elemMatch": regex}},
+            {"aliases": regex},
+            {"tags": regex},
         ],
     }
     projection = {
