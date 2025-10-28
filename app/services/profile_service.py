@@ -1,8 +1,6 @@
-"""
-Servicios de perfil de usuario.
+"""Servicios de perfil de usuario.
 
-Mantiene la API delgada y centraliza la lógica de actualización del subdocumento
-`profile` del usuario autenticado.
+Mantiene la API delgada y centraliza la actualización del subdocumento `profile`.
 """
 
 from typing import Dict, Any
@@ -17,4 +15,3 @@ def get_my_profile(user_doc: Dict[str, Any]) -> Dict[str, Any]:
 def update_my_profile(user_id: str, partial_update: Dict[str, Any]) -> Dict[str, Any]:
     """Actualiza parcialmente el perfil del usuario y devuelve el perfil actualizado."""
     return _update_user_profile(user_id, partial_update)
-

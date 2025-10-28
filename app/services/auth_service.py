@@ -1,6 +1,4 @@
-"""
-Lógica de autenticación: registro, login, refresh, logout, force-logout.
-"""
+"""Lógica de autenticación: registro, login, refresh, logout, force-logout."""
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 import secrets
@@ -30,18 +28,22 @@ ph = PasswordHasher(time_cost=2, memory_cost=51200, parallelism=2, hash_len=32, 
 
 
 def _now_utc() -> datetime:
+    """Hora actual en UTC (aware)."""
     return datetime.now(timezone.utc)
 
 
 def _refresh_token_exp() -> datetime:
+    """Expiración de refresh tokens basada en settings."""
     return _now_utc() + timedelta(days=settings.refresh_token_expire_days)
 
 
 def hash_password(password: str) -> str:
+    """Hashea password con Argon2 (parámetros seguros por defecto)."""
     return ph.hash(password)
 
 
 def verify_password(password: str, password_hash: str) -> bool:
+    """Verifica password vs hash (Argon2)."""
     try:
         return ph.verify(password_hash, password)
     except Exception:
@@ -49,7 +51,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def generate_refresh_token() -> str:
-    # 256-bit random token in hex
+    """Genera token raw (256-bit hex)."""
     return secrets.token_hex(32)
 
 
@@ -60,6 +62,7 @@ def _hash(token: str) -> str:
 def create_refresh_for_user(
     *, user_id: str, device_id: str, ip: str, user_agent: str, family_id: Optional[str] = None, rotation_parent_id: Optional[str] = None
 ) -> Tuple[str, str]:
+    """Crea un refresh token (raw) y guarda su hash. Devuelve (raw, id)."""
     """
     Crea un refresh token (raw) y guarda su hash. Devuelve (raw_token, refresh_id).
     """
@@ -106,12 +109,14 @@ def rotate_refresh_token(*, current_raw: str, device_id: str, ip: str, user_agen
 
 
 def logout_refresh_token(*, current_raw: str) -> None:
+    """Revoca el refresh actual (si existe)."""
     current = repo.get_refresh_token_by_hash(_hash(current_raw))
     if current:
         repo.revoke_refresh_token(str(current["_id"]), reason="logout")
 
 
 def login_local(*, email: str, password: str, device_id: str, ip: str, user_agent: str) -> Dict[str, Any]:
+    """Autentica usuario local y emite access/refresh tokens."""
     u = repo.find_user_by_email(email.lower())
     if not u or u.get("auth_provider") != "local":
         raise ValueError("Credenciales inválidas")
@@ -126,6 +131,7 @@ def login_local(*, email: str, password: str, device_id: str, ip: str, user_agen
 
 
 def login_google(*, google_id: str, email: str, device_id: str, ip: str, user_agent: str) -> Dict[str, Any]:
+    """Autentica usuario Google (sin verificar id_token) y emite tokens."""
     u = repo.find_user_by_email(email.lower())
     if not u or u.get("auth_provider") != "google" or u.get("google_id") != google_id:
         raise ValueError("Credenciales inválidas")
@@ -137,6 +143,7 @@ def login_google(*, google_id: str, email: str, device_id: str, ip: str, user_ag
 
 
 def force_logout_all(*, user_id: str) -> None:
+    """Incrementa token_version (invalidando access tokens previos)."""
     repo.increment_token_version(user_id)
     # Opcional: revocar familia(s) activas del usuario
 

@@ -1,6 +1,4 @@
-"""
-Service layer for notes: thin wrappers over repositories.
-"""
+"""Servicios para notas: envoltorios delgados sobre el repositorio."""
 from typing import Dict, Any, List, Optional
 
 from app.repositories.note_repo import (
@@ -10,9 +8,10 @@ from app.repositories.note_repo import (
 
 
 def insert_note(doc: Dict[str, Any]) -> str:
+    """Inserta una nota y devuelve el id (str)."""
     return _insert_note(doc)
 
 
 def list_notes(user_id: Optional[str] = None, status: Optional[str] = None, tag: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Lista notas filtrando por usuario/estado/tag."""
     return _list_notes(user_id=user_id, status=status, tag=tag)
-

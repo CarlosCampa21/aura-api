@@ -1,9 +1,8 @@
-"""
-Herramientas de consulta de horario (timetable) para preguntas del alumno.
+"""Herramientas de consulta de horario (timetable) para preguntas del alumno.
 
 Expone funciones puras para:
 - Detectar intención de consulta de horario en español.
-- Resolver "qué clase me toca ahora/hoy/mañana/lunes..." usando los datos en Mongo.
+- Resolver "qué clase me toca ahora/hoy/mañana/lunes..." con datos en Mongo.
 
 No requiere al LLM: responde de forma determinista si hay datos suficientes.
 """

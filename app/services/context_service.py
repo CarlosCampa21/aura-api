@@ -1,10 +1,15 @@
 # app/services/context_builder.py
+"""Construye un mini‑contexto académico para enriquecer respuestas del asistente.
+
+Lee perfil, timetable y primeras entradas desde Mongo, y devuelve un texto breve.
+Pensado para usar pocos tokens en prompts.
+"""
 from app.infrastructure.db.mongo import get_db
 
 def build_academic_context(user_email: str) -> str:
-    """
-    Arma un mini-contexto con datos del alumno desde Mongo para enriquecer la respuesta.
-    (Ligero para no enviar demasiados tokens.)
+    """Devuelve contexto académico breve para `user_email`.
+
+    Incluye: nombre, carrera, semestre, horario vigente (título) y hasta 12 bloques.
     """
     try:
         db = get_db()

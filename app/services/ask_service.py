@@ -1,12 +1,18 @@
-# app/services/ask_service.py
+"""Orquestación de preguntas del usuario hacia el asistente (IA + tools)."""
 from app.infrastructure.ai.ai_service import ask_llm
 from app.services.context_service import build_academic_context
 from app.services.schedule_service import try_answer_schedule
 from app.infrastructure.ai.tools.router import answer_with_tools
 
+
 def ask(user_email: str, question: str) -> dict:
-    """
-    Construye contexto académico y pregunta al LLM, sin persistir en colecciones legacy.
+    """Construye contexto y responde usando tool‑calling u LLM.
+
+    Flujo:
+    1) Construye contexto académico breve
+    2) Intenta tool‑calling (get_schedule/get_now)
+    3) Fallback local de horario
+    4) Fallback LLM (OpenAI→Ollama)
     """
     # 1) Construye contexto breve
     ctx = build_academic_context(user_email)
