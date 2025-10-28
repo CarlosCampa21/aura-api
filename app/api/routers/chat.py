@@ -2,6 +2,7 @@
 Endpoints para chat conversacional (conversations/messages).
 """
 from fastapi import APIRouter, HTTPException, status, Query, Header, Request
+import logging
 from typing import Optional
 from app.api.schemas.chat import (
     ConversationCreate,
@@ -30,6 +31,7 @@ from app.services import ask_service
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+_log = logging.getLogger("aura.chat")
 
 
 @router.post(
@@ -255,7 +257,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
 
         dt_ms = int((monotonic() - t0) * 1000)
         # Log sencillo
-        print(f"/chat/ask mode={mode} model={effective_model} latency_ms={dt_ms}")
+        _log.info("/chat/ask mode=%s model=%s latency_ms=%s", mode, effective_model, dt_ms)
         return {"message": "ok", **out, "user_message_id": user_msg_id, "assistant_message_id": asst_msg_id, "latency_ms": dt_ms}
     except HTTPException:
         raise
@@ -371,7 +373,7 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
 
         resp = StreamingResponse(_gen(), media_type="text/event-stream")
         dt_ms = int((monotonic() - t0) * 1000)
-        print(f"/chat/ask/stream mode={mode} model={effective_model} latency_ms={dt_ms}")
+        _log.info("/chat/ask/stream mode=%s model=%s latency_ms=%s", mode, effective_model, dt_ms)
         return resp
     except HTTPException:
         raise
