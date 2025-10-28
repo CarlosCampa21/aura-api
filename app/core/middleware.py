@@ -44,12 +44,18 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
 def add_middlewares(app: FastAPI) -> None:
     # CORS configurable desde settings
-    app.add_middleware(
-        CORSMiddleware,
+    # Si cors_allow_any=True, habilita todos los orígenes con regex.
+    cors_kwargs = dict(
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        allow_credentials=True,
     )
+    if getattr(settings, "cors_allow_any", False):
+        # Con orígenes dinámicos y sin cookies, desactiva credentials para cumplir CORS
+        cors_kwargs["allow_origins"] = []
+        cors_kwargs["allow_origin_regex"] = ".*"
+        cors_kwargs["allow_credentials"] = False
+    app.add_middleware(CORSMiddleware, **cors_kwargs)
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(LoggingMiddleware)

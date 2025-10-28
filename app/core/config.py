@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     # CORS (para Vite/React en localhost)
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173", "https://front-aura.vercel.app"]
+    cors_allow_any: bool = False  # Permite todos los orígenes (usa con cuidado)
 
     # Mongo
     mongo_uri: str = "mongodb://localhost:27017"
