@@ -32,7 +32,13 @@ from app.services import ask_service
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
-@router.post("/conversations", status_code=status.HTTP_201_CREATED, response_model=dict)
+@router.post(
+    "/conversations",
+    status_code=status.HTTP_201_CREATED,
+    response_model=dict,
+    summary="Crear conversación",
+    description="Crea una conversación y devuelve datos base (sin _id expuesto).",
+)
 def create_conversation(payload: ConversationCreate):
     try:
         inserted_id = insert_conversation(payload.model_dump(mode="json"))
@@ -50,19 +56,30 @@ def create_conversation(payload: ConversationCreate):
         ).model_dump()
         return {"message": "ok", "id": inserted_id, "data": out}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Insert conversation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"No se pudo crear la conversación: {e}")
 
 
-@router.get("/conversations", response_model=dict)
+@router.get(
+    "/conversations",
+    response_model=dict,
+    summary="Listar conversaciones",
+    description="Lista conversaciones por usuario/estado/sesión (no expone _id).",
+)
 def get_conversations(user_id: Optional[str] = Query(default=None), status_f: Optional[str] = Query(default=None), session_id: Optional[str] = Query(default=None)):
     try:
         items = repo_list_conversations(user_id=user_id, status=status_f, session_id=session_id)
         return {"conversations": items}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"List conversations failed: {e}")
+        raise HTTPException(status_code=500, detail=f"No se pudieron listar las conversaciones: {e}")
 
 
-@router.post("/messages", status_code=status.HTTP_201_CREATED, response_model=dict)
+@router.post(
+    "/messages",
+    status_code=status.HTTP_201_CREATED,
+    response_model=dict,
+    summary="Crear mensaje",
+    description="Inserta un mensaje dentro de una conversación.",
+)
 def create_message(payload: MessageCreate):
     try:
         inserted_id = insert_message(payload.model_dump(mode="json"))
@@ -81,10 +98,15 @@ def create_message(payload: MessageCreate):
         ).model_dump()
         return {"message": "ok", "id": inserted_id, "data": out}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Insert message failed: {e}")
+        raise HTTPException(status_code=500, detail=f"No se pudo crear el mensaje: {e}")
 
 
-@router.get("/messages", response_model=dict)
+@router.get(
+    "/messages",
+    response_model=dict,
+    summary="Listar mensajes",
+    description="Lista mensajes por conversación, usuario o sesión.",
+)
 def get_messages(
     conversation_id: Optional[str] = Query(default=None),
     user_id: Optional[str] = Query(default=None),
@@ -96,10 +118,16 @@ def get_messages(
         items = repo_list_messages(conversation_id=conversation_id, user_id=user_id, session_id=session_id)
         return {"messages": items}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"List messages failed: {e}")
+        raise HTTPException(status_code=500, detail=f"No se pudieron listar los mensajes: {e}")
 
 
-@router.post("/ask", status_code=status.HTTP_201_CREATED, response_model=dict)
+@router.post(
+    "/ask",
+    status_code=status.HTTP_201_CREATED,
+    response_model=dict,
+    summary="Preguntar (tool-calling + LLM)",
+    description="Orquesta tools (horario/hora) y genera respuesta del asistente.",
+)
 def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[str] = Header(default=None)):
     """
     Orquesta la interacción de chat:
@@ -232,10 +260,14 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat ask failed: {e}")
+        raise HTTPException(status_code=500, detail=f"No se pudo procesar la pregunta: {e}")
 
 
-@router.post("/ask/stream")
+@router.post(
+    "/ask/stream",
+    summary="Preguntar con streaming (SSE)",
+    description="Emite la respuesta del asistente en chunks (Server‑Sent Events).",
+)
 def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Optional[str] = Header(default=None)):
     """
     Variante con SSE (Server-Sent Events). Emite el texto del asistente en `data:` por chunks.
@@ -344,4 +376,4 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat ask stream failed: {e}")
+        raise HTTPException(status_code=500, detail=f"No se pudo procesar la pregunta (stream): {e}")

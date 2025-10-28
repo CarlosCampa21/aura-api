@@ -12,17 +12,31 @@ from app.infrastructure.ai.ollama_client import ollama_ask
 router = APIRouter(tags=["Health"])  # no prefix to keep paths stable
 
 
-@router.get("/ping")
+@router.get(
+    "/ping",
+    summary="Ping básico",
+    description="Prueba de vida del servicio (sin auth).",
+)
 def ping():
     return {"message": "pong"}
 
 
-@router.get("/health", status_code=status.HTTP_200_OK)
+@router.get(
+    "/health",
+    status_code=status.HTTP_200_OK,
+    summary="Salud básica",
+    description="Devuelve ok=true si la app está arriba (sin ping a dependencias).",
+)
 def health():
     return {"ok": True}
 
 
-@router.get("/_debug/status", status_code=status.HTTP_200_OK)
+@router.get(
+    "/_debug/status",
+    status_code=status.HTTP_200_OK,
+    summary="Estado de configuración y Ollama",
+    description="Muestra flags de config y prueba /api/tags de Ollama si está configurado.",
+)
 def debug_status():
     out = {
         "app_name": settings.app_name,
@@ -46,7 +60,12 @@ def debug_status():
     return out
 
 
-@router.get("/_debug/ollama", status_code=status.HTTP_200_OK)
+@router.get(
+    "/_debug/ollama",
+    status_code=status.HTTP_200_OK,
+    summary="Ping a Ollama con prompt de ejemplo",
+    description="Llama a Ollama usando el mismo cliente que la app.",
+)
 def debug_ollama(sample: str = "Hola, ¿quién eres?"):
     try:
         text = ollama_ask(
@@ -60,7 +79,12 @@ def debug_ollama(sample: str = "Hola, ¿quién eres?"):
         return {"ok": False, "error": str(e)}
 
 
-@router.get("/_debug/now", status_code=status.HTTP_200_OK)
+@router.get(
+    "/_debug/now",
+    status_code=status.HTTP_200_OK,
+    summary="Hora del servidor y resuelta",
+    description="Devuelve la hora del servidor y, si hay email/tz, la hora en esa zona.",
+)
 def debug_now(email: str | None = None, tz: str | None = None):
     server_now = datetime.now().isoformat()
     resolved_tz = tz
@@ -76,5 +100,5 @@ def debug_now(email: str | None = None, tz: str | None = None):
         if resolved_tz:
             user_now = datetime.now(ZoneInfo(resolved_tz)).isoformat()
     except Exception as e:
-        user_now = f"Invalid tz: {resolved_tz} ({e})"
+        user_now = f"Zona horaria inválida: {resolved_tz} ({e})"
     return {"server_now": server_now, "tz": resolved_tz, "user_now": user_now}

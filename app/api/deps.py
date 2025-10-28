@@ -2,7 +2,6 @@
 Dependencias reutilizables para routers (FastAPI Depends).
 
 - Autenticación: extrae y valida Access Token, devuelve el usuario actual.
-- Mantener esta capa delgada: sin lógica de negocio pesada.
 """
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, Header

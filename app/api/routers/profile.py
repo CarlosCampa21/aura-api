@@ -8,7 +8,12 @@ from app.services import profile_service
 router = APIRouter(prefix="/profile", tags=["Profile"])
 
 
-@router.get("", response_model=dict)
+@router.get(
+    "",
+    response_model=dict,
+    summary="Obtener mi perfil",
+    description="Devuelve el perfil del usuario autenticado.",
+)
 def get_my_profile(user=Depends(get_current_user)):
     try:
         return {"profile": profile_service.get_my_profile(user)}
@@ -16,7 +21,13 @@ def get_my_profile(user=Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"No se pudo obtener el perfil: {e}")
 
 
-@router.patch("", response_model=dict, status_code=status.HTTP_200_OK)
+@router.patch(
+    "",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    summary="Actualizar mi perfil",
+    description="Actualiza parcialmente el perfil del usuario autenticado.",
+)
 def patch_my_profile(payload: UserProfileUpdate, user=Depends(get_current_user)):
     try:
         data = payload.model_dump(exclude_none=True)

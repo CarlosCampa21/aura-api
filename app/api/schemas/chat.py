@@ -42,9 +42,6 @@ class ConversationOut(BaseModel):
     last_message_at: str
     created_at: str
     updated_at: str
-    # Opcional para invitados
-    # Nota: no exponemos `_id` en los listados
-
 
 class MessageCreate(BaseModel):
     """Crear un mensaje dentro de una conversación."""
