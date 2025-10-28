@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     chat_auth_stream_rate_per_min: int = 20
     chat_prompt_max_chars_guest: int = 800
     chat_prompt_max_chars_auth: int = 4000
+
+    # Storage (R2)
+    storage_provider: str | None = None  # e.g., "r2"
+    r2_bucket: str | None = None
+    r2_endpoint: str | None = None
+    r2_region: str = "auto"
+    r2_access_key: str | None = None
+    r2_secret_key: str | None = None
+    r2_public_base_url: str | None = None
     
     # --- Utilidades derivadas / helpers ---
     @property

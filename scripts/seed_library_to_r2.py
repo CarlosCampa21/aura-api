@@ -42,7 +42,7 @@ def main():
         with open(manifest_path, "r", encoding="utf-8") as fh:
             manifest = json.load(fh) or {}
 
-    bucket = os.getenv("R2_BUCKET")
+    bucket = settings.r2_bucket or os.getenv("R2_BUCKET")
     base_url = public_base_url()
     if not bucket or not base_url:
         raise SystemExit("Config R2 incompleta (R2_BUCKET/R2_PUBLIC_BASE_URL)")
@@ -91,4 +91,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

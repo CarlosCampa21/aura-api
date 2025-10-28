@@ -7,21 +7,9 @@ from __future__ import annotations
 import os
 import uuid
 from typing import Optional
-from boto3.session import Session
 
-
-def _get_client():
-    sess = Session(
-        aws_access_key_id=os.getenv("R2_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY"),
-        region_name="auto",
-    )
-    endpoint_url = f"https://{os.getenv('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com"
-    return sess.client("s3", endpoint_url=endpoint_url)
-
-
-def _public_base() -> Optional[str]:
-    return os.getenv("R2_PUBLIC_BASE_URL")
+from app.infrastructure.storage.r2 import get_s3_client, public_base_url
+from app.core.config import settings
 
 
 async def upload_uploadfile_to_r2(upload_file, prefix: str = "chat/") -> str:
@@ -31,8 +19,8 @@ async def upload_uploadfile_to_r2(upload_file, prefix: str = "chat/") -> str:
     """
     import asyncio
 
-    bucket = os.getenv("R2_BUCKET")
-    base = _public_base()
+    bucket = settings.r2_bucket or os.getenv("R2_BUCKET")
+    base = public_base_url()
     if not bucket or not base:
         raise RuntimeError("R2 no configurado (R2_BUCKET/R2_PUBLIC_BASE_URL)")
 
@@ -47,7 +35,7 @@ async def upload_uploadfile_to_r2(upload_file, prefix: str = "chat/") -> str:
     fileobj = upload_file.file
     fileobj.seek(0)
 
-    s3 = _get_client()
+    s3 = get_s3_client()
 
     def _put():
         s3.put_object(Bucket=bucket, Key=key, Body=fileobj, ContentType=content_type)
@@ -56,4 +44,3 @@ async def upload_uploadfile_to_r2(upload_file, prefix: str = "chat/") -> str:
     await loop.run_in_executor(None, _put)
 
     return base.rstrip("/") + "/" + key
-
