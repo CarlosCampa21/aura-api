@@ -15,7 +15,7 @@ from app.infrastructure.security.token_service import create_access_token
 
 # Nuevos imports para casos de uso de registro/verificación
 from app.repositories.user_repo import insert_user
-from app.services import email_service
+from app.infrastructure.email import email_service
 from app.infrastructure.security import token_service
 from app.infrastructure.http import google_oauth
 

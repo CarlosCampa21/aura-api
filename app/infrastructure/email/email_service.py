@@ -108,3 +108,4 @@ def send_verification_code_email(user: Dict, code: str, expires_in_minutes: int)
     """
     text = f"Tu código de verificación de AURA es: {code}. Expira en {expires_in_minutes} minutos."
     send_email(email, subject, html, text)
+

@@ -20,7 +20,7 @@ from app.repositories.messages_repo import (
     list_messages as repo_list_messages,
 )
 from app.repositories.auth_repository import get_user_by_id
-from app.repositories.note_repo import insert_note as insert_note_doc
+from app.services.note_service import insert_note as insert_note_doc
 from fastapi.responses import StreamingResponse
 from app.core.config import settings
 from app.core import rate_limit

@@ -9,16 +9,12 @@ from app.api.schemas.academics import (
     TimetableEntryCreate,
     TimetableEntryOut,
 )
-from app.repositories.academics_timetables_repo import (
+from app.services.academics_service import (
     insert_timetable,
     list_timetables,
     publish_timetable,
-)
-from app.repositories.academics_entries_repo import (
     insert_entries_bulk,
     list_entries,
-)
-from app.repositories.academics_catalog_repo import (
     insert_department,
     list_departments,
     insert_program,
