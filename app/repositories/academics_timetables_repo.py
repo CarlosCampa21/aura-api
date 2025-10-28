@@ -1,6 +1,4 @@
-"""
-Repositorio para `timetable` (cabecera de horario) y utilidades relacionadas.
-"""
+"""Repo para `timetable` (cabecera de horario) y utilidades relacionadas."""
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
 from app.infrastructure.db.mongo import get_db
@@ -24,6 +22,7 @@ def _key(doc: Dict[str, Any]) -> Tuple[str, str, int, str, str]:
 
 
 def insert_timetable(doc: Dict[str, Any]) -> str:
+    """Inserta un timetable (status draft por defecto) y devuelve su id (str)."""
     db = get_db()
     data = dict(doc)
     now = _now_iso()
@@ -40,6 +39,7 @@ def insert_timetable(doc: Dict[str, Any]) -> str:
 
 
 def publish_timetable(timetable_id: str) -> None:
+    """Publica un timetable y marca `is_current=True` desmarcando otros de la misma combinación."""
     db = get_db()
     now = _now_iso()
     # Encuentra doc para saber combinación
@@ -66,6 +66,7 @@ def publish_timetable(timetable_id: str) -> None:
 
 
 def list_timetables(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Lista timetables filtrando por combinación; expone `id` como str y ordena por current/updated_at."""
     db = get_db()
     q: Dict[str, Any] = {}
     for k in ["department_code", "program_code", "semester", "group", "period_code", "status", "is_current", "shift"]:
@@ -81,6 +82,7 @@ def list_timetables(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def set_shift_if_missing(timetable_id: str, inferred: Optional[str]) -> None:
+    """Establece `shift` solo si no existe aún (helper usado por entries)."""
     if not inferred:
         return
     db = get_db()
@@ -88,4 +90,3 @@ def set_shift_if_missing(timetable_id: str, inferred: Optional[str]) -> None:
         {"_id": ObjectId(timetable_id), "$or": [{"shift": None}, {"shift": {"$exists": False}}]},
         {"$set": {"shift": inferred, "updated_at": _now_iso()}},
     )
-

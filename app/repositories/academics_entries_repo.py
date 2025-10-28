@@ -1,5 +1,7 @@
-"""
-Repositorio para `timetable_entry` y lógica de inferencia de turno.
+"""Repo para `timetable_entry` y lógica de inferencia de turno.
+
+- Inserción bulk con sellado de timestamps.
+- Inferencia de turno TM/TV en base al promedio de horas de inicio.
 """
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
@@ -23,6 +25,10 @@ def _to_minutes(hhmm: str) -> int:
 
 
 def insert_entries_bulk(timetable_id: str, entries: List[Dict[str, Any]]) -> int:
+    """Inserta múltiples entries para un timetable.
+
+    Devuelve la cantidad insertada. No inserta si `entries` está vacío.
+    """
     db = get_db()
     now = _now_iso()
     data: List[Dict[str, Any]] = []
@@ -51,6 +57,7 @@ def insert_entries_bulk(timetable_id: str, entries: List[Dict[str, Any]]) -> int
 
 
 def list_entries(timetable_id: str) -> List[Dict[str, Any]]:
+    """Lista entries de un timetable (ordenadas por día y hora)."""
     db = get_db()
     docs = list(db[COLL].find({"timetable_id": str(timetable_id)}).sort([("day", 1), ("start_time", 1)]))
     out: List[Dict[str, Any]] = []
@@ -59,4 +66,3 @@ def list_entries(timetable_id: str) -> List[Dict[str, Any]]:
         d.pop("_id", None)
         out.append(d)
     return out
-

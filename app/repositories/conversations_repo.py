@@ -1,7 +1,6 @@
-"""
-Repositorio para la colección `conversations`.
+"""Repo de la colección `conversations`.
 
-- Guarda `user_id` como string (ObjectId serializado) para consistencia con otras refs.
+- Guarda `user_id` como string (ObjectId serializado) para consistencia.
 - Sella timestamps en ISO-8601 UTC (Z) y mantiene `last_message_at`.
 """
 from typing import Dict, Any, List, Optional
@@ -17,6 +16,7 @@ def _now_iso() -> str:
 
 
 def insert_conversation(doc: Dict[str, Any]) -> str:
+    """Inserta conversación con defaults y devuelve id (str)."""
     db = get_db()
     data = dict(doc)
     now = _now_iso()
@@ -35,6 +35,7 @@ def insert_conversation(doc: Dict[str, Any]) -> str:
 
 
 def list_conversations(user_id: Optional[str] = None, status: Optional[str] = None, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Lista conversaciones por filtros; expone `id` (str) y ordena por updated_at desc."""
     db = get_db()
     filtro: Dict[str, Any] = {}
     if user_id:
@@ -53,7 +54,7 @@ def list_conversations(user_id: Optional[str] = None, status: Optional[str] = No
 
 
 def update_conversation_meta(conversation_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
-    """Actualiza campos de metadatos (title, status, settings, metadata)."""
+    """Actualiza metadatos (title, status, settings, metadata, last_message_at)."""
     db = get_db()
     set_ops: Dict[str, Any] = {"updated_at": _now_iso()}
     for k in ["title", "status", "settings", "metadata", "last_message_at"]:

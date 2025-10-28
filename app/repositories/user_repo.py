@@ -1,6 +1,4 @@
-"""
-Repositorio para la colección `user`.
-"""
+"""Repo de la colección `user`."""
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 from app.infrastructure.db.mongo import get_db
@@ -16,7 +14,7 @@ def _now_iso() -> str:
 
 def insert_user(doc: Dict[str, Any]) -> str:
     """
-    Inserta un usuario en la colección `user` y retorna el string del inserted_id.
+    Inserta un usuario y retorna el id (str).
     - Normaliza `email` a minúsculas.
     - Define valores por defecto (is_active, email_verified, token_version).
     - Sella `created_at` y `updated_at` en ISO-8601 UTC.
@@ -58,7 +56,7 @@ def insert_user(doc: Dict[str, Any]) -> str:
 
 def list_users() -> List[Dict[str, Any]]:
     """
-    Lista user excluyendo campos sensibles y `_id`.
+    Lista usuarios excluyendo campos sensibles y `_id`.
     """
     db = get_db()
     projection = {

@@ -1,6 +1,4 @@
-"""
-Repositorio para la colección `note` (singular).
-"""
+"""Repo de la colección"""
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from app.infrastructure.db.mongo import get_db
@@ -13,6 +11,7 @@ def _now_iso() -> str:
 
 
 def insert_note(doc: Dict[str, Any]) -> str:
+    """Inserta nota con defaults y devuelve id (str)."""
     db = get_db()
     data = dict(doc)
     now = _now_iso()
@@ -26,6 +25,7 @@ def insert_note(doc: Dict[str, Any]) -> str:
 
 
 def list_notes(user_id: Optional[str] = None, status: Optional[str] = None, tag: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Lista notas por filtros básicos (ordenadas por updated_at desc)."""
     db = get_db()
     filtro: Dict[str, Any] = {}
     if user_id:

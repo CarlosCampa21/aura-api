@@ -1,5 +1,6 @@
-"""
-Repositorios para catálogos académicos: department, program, period, course.
+"""Repos de catálogos académicos: department, program, period, course.
+
+Operan con documentos simples (dict) y sellan timestamps ISO.
 """
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ def _now_iso() -> str:
 
 # Department
 def insert_department(doc: Dict[str, Any]) -> str:
+    """Inserta un department y devuelve su id (str)."""
     db = get_db()
     data = dict(doc)
     now = _now_iso()
@@ -22,6 +24,7 @@ def insert_department(doc: Dict[str, Any]) -> str:
 
 
 def list_departments() -> List[Dict[str, Any]]:
+    """Lista departments ordenados por code (sin _id)."""
     db = get_db()
     docs = list(db["department"].find({}).sort("code", 1))
     out: List[Dict[str, Any]] = []
@@ -34,6 +37,7 @@ def list_departments() -> List[Dict[str, Any]]:
 
 # Program
 def insert_program(doc: Dict[str, Any]) -> str:
+    """Inserta un program y devuelve su id (str)."""
     db = get_db()
     data = dict(doc)
     now = _now_iso()
@@ -44,6 +48,7 @@ def insert_program(doc: Dict[str, Any]) -> str:
 
 
 def list_programs(department_code: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Lista programs (filtrable por department_code), sin _id."""
     db = get_db()
     q: Dict[str, Any] = {}
     if department_code:
@@ -59,6 +64,7 @@ def list_programs(department_code: Optional[str] = None) -> List[Dict[str, Any]]
 
 # Period
 def insert_period(doc: Dict[str, Any]) -> str:
+    """Inserta un period y devuelve su id (str)."""
     db = get_db()
     data = dict(doc)
     now = _now_iso()
@@ -69,6 +75,7 @@ def insert_period(doc: Dict[str, Any]) -> str:
 
 
 def list_periods(status: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Lista periods (opcionalmente por status) ordenados por año/term, sin _id."""
     db = get_db()
     q: Dict[str, Any] = {}
     if status:
@@ -84,6 +91,7 @@ def list_periods(status: Optional[str] = None) -> List[Dict[str, Any]]:
 
 # Course
 def insert_course(doc: Dict[str, Any]) -> str:
+    """Inserta un course y devuelve su id (str)."""
     db = get_db()
     data = dict(doc)
     now = _now_iso()
@@ -94,6 +102,7 @@ def insert_course(doc: Dict[str, Any]) -> str:
 
 
 def list_courses() -> List[Dict[str, Any]]:
+    """Lista courses ordenados por name, sin _id."""
     db = get_db()
     docs = list(db["course"].find({}).sort("name", 1))
     out: List[Dict[str, Any]] = []
@@ -102,4 +111,3 @@ def list_courses() -> List[Dict[str, Any]]:
         d.pop("_id", None)
         out.append(d)
     return out
-

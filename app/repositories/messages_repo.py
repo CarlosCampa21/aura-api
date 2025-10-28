@@ -1,5 +1,4 @@
-"""
-Repositorio para la colección `messages`.
+"""Repo de la colección `messages`.
 
 - Inserta mensajes y actualiza `last_message_at`/`updated_at` en la conversación.
 """
@@ -17,6 +16,7 @@ def _now_iso() -> str:
 
 
 def insert_message(doc: Dict[str, Any]) -> str:
+    """Inserta mensaje y sincroniza metadatos de la conversación asociada."""
     db = get_db()
     data = dict(doc)
     now = _now_iso()
@@ -59,6 +59,7 @@ def insert_message(doc: Dict[str, Any]) -> str:
 
 
 def list_messages(conversation_id: Optional[str] = None, user_id: Optional[str] = None, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Lista mensajes por conversación/usuario/sesión (orden cronológico ascendente)."""
     db = get_db()
     filtro: Dict[str, Any] = {}
     if conversation_id:

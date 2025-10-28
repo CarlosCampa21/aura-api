@@ -1,6 +1,4 @@
-"""
-Operaciones de persistencia para autenticación y refresh tokens.
-"""
+"""Persistencia de autenticación y refresh tokens."""
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -22,6 +20,7 @@ def _dt(dt: datetime) -> datetime:
 
 
 def find_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    """Busca usuario por email (email en minúsculas)."""
     return get_db()[USER_COLL].find_one({"email": email})
 
 
@@ -29,10 +28,12 @@ def find_user_by_email(email: str) -> Optional[Dict[str, Any]]:
 
 
 def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
+    """Obtiene usuario por id (str)."""
     return get_db()[USER_COLL].find_one({"_id": ObjectId(user_id)})
 
 
 def set_email_verified(user_id: str) -> None:
+    """Marca email verificado y activa usuario."""
     get_db()[USER_COLL].update_one(
         {"_id": ObjectId(user_id)},
         {"$set": {"email_verified": True, "is_active": True, "updated_at": datetime.utcnow().isoformat()}},
@@ -40,6 +41,7 @@ def set_email_verified(user_id: str) -> None:
 
 
 def set_email_verification_code(user_id: str, code_hash: str, expires_at: datetime) -> None:
+    """Guarda hash de código OTP y expiración (aware UTC)."""
     get_db()[USER_COLL].update_one(
         {"_id": ObjectId(user_id)},
         {
@@ -53,6 +55,7 @@ def set_email_verification_code(user_id: str, code_hash: str, expires_at: dateti
 
 
 def clear_email_verification_code(user_id: str) -> None:
+    """Elimina datos de verificación por código."""
     get_db()[USER_COLL].update_one(
         {"_id": ObjectId(user_id)},
         {"$unset": {"email_verify_code_hash": "", "email_verify_code_expires_at": ""}, "$set": {"updated_at": datetime.utcnow().isoformat()}},
@@ -63,6 +66,7 @@ def clear_email_verification_code(user_id: str) -> None:
 
 
 def increment_token_version(user_id: str) -> None:
+    """Incrementa token_version (invalidando access tokens previos)."""
     get_db()[USER_COLL].update_one(
         {"_id": ObjectId(user_id)}, {"$inc": {"token_version": 1}, "$set": {"updated_at": datetime.utcnow().isoformat()}}
     )
@@ -84,6 +88,7 @@ def create_refresh_token_doc(
     created_at: datetime,
     expires_at: datetime,
 ) -> Dict[str, Any]:
+    """Construye documento listo para insertar en refresh_token (hash + metadatos)."""
     return {
         "user_id": ObjectId(user_id),
         "token_hash": _hash_refresh_token(raw_token),
@@ -100,15 +105,18 @@ def create_refresh_token_doc(
 
 
 def insert_refresh_token(doc: Dict[str, Any]) -> str:
+    """Inserta refresh_token y devuelve id (str)."""
     res = get_db()[RT_COLL].insert_one(doc)
     return str(res.inserted_id)
 
 
 def get_refresh_token_by_hash(token_hash: str) -> Optional[Dict[str, Any]]:
+    """Obtiene refresh_token por hash."""
     return get_db()[RT_COLL].find_one({"token_hash": token_hash})
 
 
 def revoke_refresh_token(rt_id: str, reason: str) -> None:
+    """Revoca un refresh_token por id con razón (marca revoked_at/Reason)."""
     get_db()[RT_COLL].update_one(
         {"_id": ObjectId(rt_id)},
         {"$set": {"revoked_at": _dt(datetime.utcnow()), "revoked_reason": reason}},
@@ -116,6 +124,7 @@ def revoke_refresh_token(rt_id: str, reason: str) -> None:
 
 
 def revoke_family(family_id: str, reason: str) -> None:
+    """Revoca toda una familia de tokens (misma family_id)."""
     get_db()[RT_COLL].update_many(
         {"family_id": family_id, "revoked_at": None},
         {"$set": {"revoked_at": _dt(datetime.utcnow()), "revoked_reason": reason}},
