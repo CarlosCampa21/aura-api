@@ -1,9 +1,6 @@
-"""
-Rutas de autenticación para AURA.
-"""
+"""Rutas de autenticación: registro, login, verificación, refresh y logout."""
 from fastapi import APIRouter, HTTPException, status, Request, Depends, Query
  
-
 # Capa de dominio: esquemas de autenticación (valores y validaciones)
 from app.api.schemas.auth import (
     RegisterPayload,
@@ -16,6 +13,10 @@ from app.api.schemas.auth import (
     RefreshPayload,
     LogoutPayload,
     ForceLogoutPayload,
+    SimpleMessage,
+    TokensOut,
+    RegisterOut,
+    VerificationSendOut,
 )
 
 # Servicios: lógica de negocio (hashing, tokens, repos, correo)
@@ -23,48 +24,51 @@ from app.services import auth_service as service
 from app.api.deps import get_current_user
 from app.core import rate_limit
 from app.repositories import auth_repo as repo
-# Nota: token_service se usa dentro de los servicios; la API no lo necesita directamente.
-
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
-@router.post("/register", response_model=dict, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterPayload):
-    """
-    Registro de usuarios.
-
-    - La validación y normalización del payload viven en `app.api.schemas.auth`.
-    - La lógica (hash, insertar, correo, token de verificación) vive en `app.services.auth_service`.
-    """
+@router.post(
+    "/register",
+    response_model=RegisterOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Registrar usuario",
+    description="Valida payload y registra usuario (local/Google).",
+)
+def register(payload: RegisterPayload) -> RegisterOut:
     try:
-        return service.register_user(payload)
+        res = service.register_user(payload)
+        return RegisterOut(**res)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Registro falló: {e}")
 
 
-@router.post("/verify-email", response_model=dict)
-def verify_email_code(payload: VerifyEmailCodePayload):
-    """Verifica el email comparando un OTP con su hash almacenado."""
+@router.post(
+    "/verify-email",
+    response_model=SimpleMessage,
+    summary="Verificar email con código",
+    description="Valida código OTP enviado por correo y marca el email como verificado.",
+)
+def verify_email_code(payload: VerifyEmailCodePayload) -> SimpleMessage:
     try:
-        return service.verify_email_code(verification_token=payload.verification_token, code=payload.code)
+        res = service.verify_email_code(verification_token=payload.verification_token, code=payload.code)
+        return SimpleMessage(**res)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"No se pudo verificar email: {e}")
 
 
-@router.get("/verify-email", response_model=dict)
-def verify_email(token: str = Query(..., description="Token de verificación de email")):
-    """Verifica email usando un token firmado (recomendado)."""
+@router.get(
+    "/verify-email",
+    response_model=SimpleMessage,
+    summary="Verificar email con link",
+    description="Usa token firmado para verificar email (flujo de link).",
+)
+def verify_email(token: str = Query(..., description="Token de verificación de email")) -> SimpleMessage:
     try:
-        return service.verify_email_link(token=token)
+        res = service.verify_email_link(token=token)
+        return SimpleMessage(**res)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Token inválido: {e}")
 
 
 def _client_info(request: Request):
@@ -73,8 +77,13 @@ def _client_info(request: Request):
     return ip, ua
 
 
-@router.post("/login", response_model=dict)
-def login(payload: dict, request: Request):
+@router.post(
+    "/login",
+    response_model=TokensOut,
+    summary="Login (local o Google) con payload flexible",
+    description="Detecta si es login local (email+password) o Google (email+google_id).",
+)
+def login(payload: dict, request: Request) -> TokensOut:
     try:
         # Rate limit por IP
         ip = request.client.host if request.client else ""
@@ -84,44 +93,51 @@ def login(payload: dict, request: Request):
         if "password" in payload:
             lp = LoginLocalPayload(**payload)
             tokens = service.login_local(email=str(lp.email).lower(), password=lp.password, device_id=lp.device_id, ip=ip, user_agent=ua)
-            return tokens
+            return TokensOut(**tokens)
         elif "google_id" in payload and "email" in payload:
             # Compatibilidad: login Google con email + google_id (sin verificar id_token)
             gp = LoginGooglePayload(**payload)
             tokens = service.login_google(email=str(gp.email).lower(), google_id=gp.google_id, device_id=gp.device_id, ip=ip, user_agent=ua)
-            return tokens
+            return TokensOut(**tokens)
         else:
             raise HTTPException(status_code=400, detail="Payload inválido")
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Login inválido: {e}")
 
 
-@router.post("/google", response_model=dict)
-def login_with_google_token(payload: GoogleIdTokenPayload, request: Request):
-    """Login con ID Token de Google (verificado por el servicio)."""
+@router.post(
+    "/google",
+    response_model=TokensOut,
+    summary="Login con Google ID Token",
+    description="Verifica Google ID Token y emite tokens.",
+)
+def login_with_google_token(payload: GoogleIdTokenPayload, request: Request) -> TokensOut:
     try:
         ip, ua = _client_info(request)
-        return service.login_with_google_token(id_token=payload.id_token, device_id=payload.device_id, ip=ip, user_agent=ua)
+        res = service.login_with_google_token(id_token=payload.id_token, device_id=payload.device_id, ip=ip, user_agent=ua)
+        return TokensOut(**res)
     except ValueError as e:
         raise HTTPException(status_code=401, detail=f"Google login falló: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Google login falló: {e}")
 
 
-@router.post("/send-verification", response_model=dict)
-def send_verification(payload: SendVerificationPayload):
-    """Envía código de verificación por correo con expiración corta."""
-    try:
-        return service.send_verification(payload)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"No se pudo enviar verificación: {e}")
+@router.post(
+    "/send-verification",
+    response_model=VerificationSendOut,
+    summary="Enviar verificación por correo",
+    description="Envía código OTP por correo y devuelve token corto para verificación.",
+)
+def send_verification(payload: SendVerificationPayload) -> VerificationSendOut:
+    res = service.send_verification(payload)
+    return VerificationSendOut(**res)
 
 
-@router.get("/me", response_model=dict)
+@router.get(
+    "/me",
+    response_model=dict,
+    summary="Perfil básico del usuario",
+    description="Devuelve información básica del usuario autenticado.",
+)
 def me(user=Depends(get_current_user)):
-    """
-    Devuelve información básica del usuario autenticado.
-    """
     try:
         # Filtra campos sensibles
         out = {
@@ -137,8 +153,13 @@ def me(user=Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"No se pudo obtener perfil: {e}")
 
 
-@router.post("/refresh", response_model=dict)
-def refresh(payload: RefreshPayload, request: Request):
+@router.post(
+    "/refresh",
+    response_model=TokensOut,
+    summary="Rotar refresh token",
+    description="Rota el refresh token y emite un nuevo access token.",
+)
+def refresh(payload: RefreshPayload, request: Request) -> TokensOut:
     try:
         ip, ua = _client_info(request)
         new_raw, _ = service.rotate_refresh_token(current_raw=payload.refresh_token, device_id=payload.device_id, ip=ip, user_agent=ua)
@@ -154,31 +175,33 @@ def refresh(payload: RefreshPayload, request: Request):
         if not user:
             raise HTTPException(status_code=401, detail="Usuario no encontrado")
         access = service.create_access_token(user=user)
-        return {"access_token": access, "refresh_token": new_raw}
+        return TokensOut(access_token=access, refresh_token=new_raw)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Refresh inválido: {e}")
 
 
-@router.post("/logout", response_model=dict)
-def logout(payload: LogoutPayload):
-    try:
-        service.logout_refresh_token(current_raw=payload.refresh_token)
-        return {"message": "ok"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Logout falló: {e}")
+@router.post(
+    "/logout",
+    response_model=SimpleMessage,
+    summary="Cerrar sesión",
+    description="Revoca el refresh token actual.",
+)
+def logout(payload: LogoutPayload) -> SimpleMessage:
+    service.logout_refresh_token(current_raw=payload.refresh_token)
+    return SimpleMessage(message="ok")
 
 
-@router.post("/force-logout", response_model=dict)
-def force_logout(payload: ForceLogoutPayload, user=Depends(get_current_user)):
-    try:
-        # Requiere ser el mismo usuario o un admin (aquí simplificado)
-        if str(user["_id"]) != payload.user_id:
-            raise HTTPException(status_code=403, detail="No autorizado")
-        service.force_logout_all(user_id=payload.user_id)
-        return {"message": "ok"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Force logout falló: {e}")
+@router.post(
+    "/force-logout",
+    response_model=SimpleMessage,
+    summary="Forzar logout de un usuario",
+    description="Revoca sesiones (incrementa token_version). Requiere ser el mismo usuario.",
+)
+def force_logout(payload: ForceLogoutPayload, user=Depends(get_current_user)) -> SimpleMessage:
+    # Requiere ser el mismo usuario o un admin (simplificado)
+    if str(user["_id"]) != payload.user_id:
+        raise HTTPException(status_code=403, detail="No autorizado")
+    service.force_logout_all(user_id=payload.user_id)
+    return SimpleMessage(message="ok")

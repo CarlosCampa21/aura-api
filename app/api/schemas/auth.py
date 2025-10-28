@@ -82,3 +82,25 @@ class LogoutPayload(BaseModel):
 class ForceLogoutPayload(BaseModel):
     user_id: str
 
+
+# === Response models ===
+
+class SimpleMessage(BaseModel):
+    message: str
+
+
+class TokensOut(BaseModel):
+    access_token: str
+    refresh_token: str
+
+
+class RegisterOut(SimpleMessage):
+    id: Optional[str] = None
+    verification_token: Optional[str] = None
+    expires_in_minutes: Optional[int] = None
+
+
+class VerificationSendOut(SimpleMessage):
+    already_verified: Optional[bool] = None
+    verification_token: Optional[str] = None
+    expires_in_minutes: Optional[int] = None

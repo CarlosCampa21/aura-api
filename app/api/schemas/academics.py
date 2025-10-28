@@ -147,3 +147,23 @@ class TimetableEntryOut(BaseModel):
     created_at: str
     updated_at: str
 
+
+# === Response containers ===
+
+class TimetableCreateResponse(BaseModel):
+    message: str
+    id: str
+    data: TimetableOut
+
+
+class EntriesInsertOut(BaseModel):
+    inserted: int
+
+
+class TimetableEntriesOut(BaseModel):
+    entries: List[TimetableEntryOut]
+
+
+class TimetablesOut(BaseModel):
+    timetables: List[TimetableOut]
+

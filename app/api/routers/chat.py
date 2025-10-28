@@ -10,6 +10,9 @@ from app.api.schemas.chat import (
     MessageOut,
     ChatAskPayload,
     ChatAskOut,
+    ConversationCreateOut,
+    ConversationsOut,
+    ChatAskResponse,
 )
 from app.repositories.conversations_repo import (
     insert_conversation,
@@ -32,8 +35,14 @@ from app.services import ask_service
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
-@router.post("/conversations", status_code=status.HTTP_201_CREATED, response_model=dict)
-def create_conversation(payload: ConversationCreate):
+@router.post(
+    "/conversations",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ConversationCreateOut,
+    summary="Crear conversación",
+    description="Crea una conversación y devuelve datos base (sin _id expuesto).",
+)
+def create_conversation(payload: ConversationCreate) -> ConversationCreateOut:
     try:
         inserted_id = insert_conversation(payload.model_dump(mode="json"))
         # Echo mínimo; los timestamps reales los define el repo.
@@ -48,16 +57,21 @@ def create_conversation(payload: ConversationCreate):
             created_at="",
             updated_at="",
         ).model_dump()
-        return {"message": "ok", "id": inserted_id, "data": out}
+        return ConversationCreateOut(message="ok", id=inserted_id, data=ConversationOut(**out))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Insert conversation failed: {e}")
 
 
-@router.get("/conversations", response_model=dict)
-def get_conversations(user_id: Optional[str] = Query(default=None), status_f: Optional[str] = Query(default=None), session_id: Optional[str] = Query(default=None)):
+@router.get(
+    "/conversations",
+    response_model=ConversationsOut,
+    summary="Listar conversaciones",
+    description="Lista conversaciones por usuario/estado/sesión (no expone _id).",
+)
+def get_conversations(user_id: Optional[str] = Query(default=None), status_f: Optional[str] = Query(default=None), session_id: Optional[str] = Query(default=None)) -> ConversationsOut:
     try:
         items = repo_list_conversations(user_id=user_id, status=status_f, session_id=session_id)
-        return {"conversations": items}
+        return ConversationsOut(conversations=[ConversationOut(**i) for i in items])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"List conversations failed: {e}")
 
@@ -99,7 +113,13 @@ def get_messages(
         raise HTTPException(status_code=500, detail=f"List messages failed: {e}")
 
 
-@router.post("/ask", status_code=status.HTTP_201_CREATED, response_model=dict)
+@router.post(
+    "/ask",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ChatAskResponse,
+    summary="Preguntar (tool-calling + LLM)",
+    description="Orquesta tools (horario/hora) y genera respuesta del asistente.",
+)
 def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[str] = Header(default=None)):
     """
     Orquesta la interacción de chat:
@@ -228,7 +248,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
         dt_ms = int((monotonic() - t0) * 1000)
         # Log sencillo
         print(f"/chat/ask mode={mode} model={effective_model} latency_ms={dt_ms}")
-        return {"message": "ok", **out, "user_message_id": user_msg_id, "assistant_message_id": asst_msg_id, "latency_ms": dt_ms}
+        return ChatAskResponse(message="ok", **out, user_message_id=user_msg_id, assistant_message_id=asst_msg_id, latency_ms=dt_ms)
     except HTTPException:
         raise
     except Exception as e:

@@ -1,24 +1,20 @@
-# app/api/aura.py
+"""Endpoints de Aura (ask directo con orquestación mínima)."""
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, EmailStr
 from app.services.ask_service import ask
+from app.api.schemas.aura import Ask, AuraAskOut
 
 router = APIRouter(prefix="/aura", tags=["Aura"])
 
-class Ask(BaseModel):
-    usuario_correo: EmailStr
-    pregunta: str
 
-@router.post("/ask")
-def aura_ask(payload: Ask):
-    """
-    Orquesta el caso de uso:
-      - Construye contexto
-      - Pregunta al LLM (OpenAI→fallback→Ollama)
-      - No persiste en colecciones legacy; la persistencia ocurre vía /chat/messages
-    """
+@router.post(
+    "/ask",
+    response_model=AuraAskOut,
+    summary="Pregunta rápida a Aura",
+    description="Construye contexto, pregunta al LLM y devuelve respuesta (sin persistencia).",
+)
+def aura_ask(payload: Ask) -> AuraAskOut:
     try:
         result = ask(str(payload.usuario_correo), payload.pregunta.strip())
-        return {"message": "ok", **result}
+        return AuraAskOut(message="ok", **result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ask failed: {e}")

@@ -37,3 +37,12 @@ class NoteOut(BaseModel):
     created_at: str
     updated_at: str
 
+
+class NoteCreateResponse(BaseModel):
+    message: str
+    id: str
+    data: NoteOut
+
+
+class NoteListOut(BaseModel):
+    note: List[NoteOut]

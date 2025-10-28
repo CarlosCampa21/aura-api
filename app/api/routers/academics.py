@@ -8,6 +8,10 @@ from app.api.schemas.academics import (
     TimetableOut,
     TimetableEntryCreate,
     TimetableEntryOut,
+    TimetableCreateResponse,
+    EntriesInsertOut,
+    TimetableEntriesOut,
+    TimetablesOut,
 )
 from app.services.academics_service import (
     insert_timetable,
@@ -39,8 +43,14 @@ from app.api.schemas.academics import (
 router = APIRouter(prefix="/academics", tags=["Academics"])
 
 
-@router.post("/timetables", status_code=status.HTTP_201_CREATED, response_model=dict)
-def create_timetable(payload: TimetableCreate):
+@router.post(
+    "/timetables",
+    status_code=status.HTTP_201_CREATED,
+    response_model=TimetableCreateResponse,
+    summary="Crear timetable",
+    description="Crea un horario académico con metadatos básicos.",
+)
+def create_timetable(payload: TimetableCreate) -> TimetableCreateResponse:
     try:
         inserted_id = insert_timetable(payload.model_dump(mode="json"))
         out = TimetableOut(
@@ -58,12 +68,17 @@ def create_timetable(payload: TimetableCreate):
             updated_at="",
             published_at=None,
         ).model_dump()
-        return {"message": "ok", "id": inserted_id, "data": out}
+        return TimetableCreateResponse(message="ok", id=inserted_id, data=TimetableOut(**out))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Create timetable failed: {e}")
 
 
-@router.get("/timetables", response_model=dict)
+@router.get(
+    "/timetables",
+    response_model=TimetablesOut,
+    summary="Listar timetables",
+    description="Lista horarios filtrando por programa/semestre/grupo/período.",
+)
 def get_timetables(
     department_code: Optional[str] = Query(default="DASC"),
     program_code: Optional[str] = Query(default=None),
@@ -85,7 +100,7 @@ def get_timetables(
             "is_current": is_current,
             "shift": shift,
         })
-        return {"timetables": items}
+        return TimetablesOut(timetables=[TimetableOut(**i) for i in items])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"List timetables failed: {e}")
 
@@ -99,8 +114,14 @@ def publish(timetable_id: str):
         raise HTTPException(status_code=500, detail=f"Publish failed: {e}")
 
 
-@router.post("/timetable-entries", status_code=status.HTTP_201_CREATED, response_model=dict)
-def create_entries(payload: Dict[str, Any]):
+@router.post(
+    "/timetable-entries",
+    status_code=status.HTTP_201_CREATED,
+    response_model=EntriesInsertOut,
+    summary="Insertar entries en bloque",
+    description="Inserta múltiples entries para un timetable.",
+)
+def create_entries(payload: Dict[str, Any]) -> EntriesInsertOut:
     """
     Inserta entradas en bloque para un `timetable_id`.
     payload: { timetable_id: str, entries: TimetableEntryCreate[] }
@@ -114,16 +135,21 @@ def create_entries(payload: Dict[str, Any]):
             obj = TimetableEntryCreate(**{**e, "timetable_id": timetable_id})
             normalized.append(obj.model_dump(mode="json"))
         count = insert_entries_bulk(timetable_id, normalized)
-        return {"inserted": count}
+        return EntriesInsertOut(inserted=count)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Create entries failed: {e}")
 
 
-@router.get("/timetable-entries", response_model=dict)
-def get_entries(timetable_id: str = Query(...)):
+@router.get(
+    "/timetable-entries",
+    response_model=TimetableEntriesOut,
+    summary="Listar entries de un timetable",
+    description="Devuelve las entries de un horario por su id.",
+)
+def get_entries(timetable_id: str = Query(...)) -> TimetableEntriesOut:
     try:
         items = list_entries(timetable_id)
-        return {"entries": items}
+        return TimetableEntriesOut(entries=[TimetableEntryOut(**e) for e in items])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"List entries failed: {e}")
 
