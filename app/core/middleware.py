@@ -1,5 +1,5 @@
 """
-Application middlewares: request id and request logging, plus CORS.
+Middlewares de aplicación: request id, logging por petición y CORS.
 """
 import logging
 import time
@@ -43,7 +43,13 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
 
 def add_middlewares(app: FastAPI) -> None:
-    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"],)
+    # CORS configurable desde settings
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(LoggingMiddleware)
-

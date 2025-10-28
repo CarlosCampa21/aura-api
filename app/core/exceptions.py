@@ -1,5 +1,5 @@
 """
-Global exception handlers for consistent API errors.
+Manejadores globales de excepciones para respuestas de API consistentes.
 """
 import logging
 from typing import Any, Dict
@@ -19,7 +19,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_exc_handler(request: Request, exc: StarletteHTTPException):
-        body: Dict[str, Any] = {"message": exc.detail or "HTTP error"}
+        body: Dict[str, Any] = {"message": exc.detail or "Error HTTP"}
         rid = _req_id(request)
         if rid:
             body["request_id"] = rid
@@ -27,7 +27,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_handler(request: Request, exc: RequestValidationError):
-        body: Dict[str, Any] = {"message": "Validation error", "errors": exc.errors()}
+        body: Dict[str, Any] = {"message": "Error de validación", "errors": exc.errors()}
         rid = _req_id(request)
         if rid:
             body["request_id"] = rid
@@ -37,8 +37,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _generic_handler(request: Request, exc: Exception):
         rid = _req_id(request)
         log.exception("Unhandled error request_id=%s", rid)
-        body: Dict[str, Any] = {"message": "Internal server error"}
+        body: Dict[str, Any] = {"message": "Error interno del servidor"}
         if rid:
             body["request_id"] = rid
         return JSONResponse(status_code=500, content=body)
-

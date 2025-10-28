@@ -1,4 +1,8 @@
-# app/core/config.py
+"""Configuración central de la aplicación (Pydantic Settings).
+
+- Carga variables desde .env en la raíz del backend.
+- Agrupa ajustes por área: App, CORS, Mongo, Auth/JWT, OpenAI/Ollama, Email, Chat.
+"""
 from pydantic_settings import BaseSettings
 try:
     # pydantic-settings v2 style
@@ -7,10 +11,14 @@ except Exception:  # pragma: no cover
     SettingsConfigDict = None  # type: ignore
 from pathlib import Path
 
-# Resolve the .env located at the backend root regardless of CWD
+# Resuelve el .env ubicado en la raíz del backend (independiente del CWD)
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 class Settings(BaseSettings):
+    """Conjunto de variables de configuración con valores por defecto razonables.
+
+    Nota: los valores pueden sobreescribirse vía variables de entorno (.env).
+    """
     # App
     app_name: str = "Aura API (Académica)"
     api_prefix: str = "/api"
@@ -63,6 +71,36 @@ class Settings(BaseSettings):
     chat_auth_stream_rate_per_min: int = 20
     chat_prompt_max_chars_guest: int = 800
     chat_prompt_max_chars_auth: int = 4000
+    
+    # --- Utilidades derivadas / helpers ---
+    @property
+    def api_prefix_normalized(self) -> str:
+        """Devuelve `api_prefix` con formato consistente.
+
+        - Siempre inicia con '/'
+        - Sin '/' final (excepto cuando es solo '/')
+        - Si está vacío, devuelve ""
+        """
+        pref = (self.api_prefix or "").strip()
+        if not pref:
+            return ""
+        if not pref.startswith('/'):
+            pref = '/' + pref
+        if len(pref) > 1 and pref.endswith('/'):
+            pref = pref[:-1]
+        return pref
+
+    @property
+    def openai_configured(self) -> bool:
+        return bool(self.openai_api_key)
+
+    @property
+    def ollama_configured(self) -> bool:
+        return bool(self.ollama_url and self.ollama_model)
+
+    def email_verify_link(self, token: str) -> str:
+        """Construye el link de verificación de email a partir del base configurado."""
+        return f"{self.email_verify_link_base}{token}"
     # pydantic-settings configuration (v2)
     if SettingsConfigDict is not None:
         model_config = SettingsConfigDict(

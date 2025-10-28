@@ -1,6 +1,6 @@
-# app/api/router.py
+"""Agregador de routers de la API."""
 from fastapi import APIRouter
-from app.api.routers import aura, auth, profile, chat, note, academics, health  
+from app.api.routers import aura, auth, profile, chat, note, academics, health
 
 api_router = APIRouter()
 api_router.include_router(aura.router)

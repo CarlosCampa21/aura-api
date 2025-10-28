@@ -40,22 +40,26 @@ def health():
 def debug_status():
     out = {
         "app_name": settings.app_name,
-        "api_prefix": settings.api_prefix,
-        "openai_configured": bool(settings.openai_api_key),
+        "api_prefix": settings.api_prefix_normalized or settings.api_prefix,
+        "openai_configured": settings.openai_configured,
         "ollama_url": settings.ollama_url,
         "ollama_model": settings.ollama_model,
         "ollama_timeout_seconds": settings.ollama_timeout_seconds,
     }
 
-    try:
-        r = requests.get(f"{settings.ollama_url}/api/tags", timeout=3)
-        r.raise_for_status()
-        data = r.json() if r.content else {}
-        out["ollama_reachable"] = True
-        out["ollama_models"] = [m.get("name") for m in data.get("models", [])]
-    except Exception as e:
+    if settings.ollama_configured:
+        try:
+            r = requests.get(f"{settings.ollama_url}/api/tags", timeout=3)
+            r.raise_for_status()
+            data = r.json() if r.content else {}
+            out["ollama_reachable"] = True
+            out["ollama_models"] = [m.get("name") for m in data.get("models", [])]
+        except Exception as e:
+            out["ollama_reachable"] = False
+            out["ollama_error"] = str(e)
+    else:
         out["ollama_reachable"] = False
-        out["ollama_error"] = str(e)
+        out["ollama_error"] = "Ollama no configurado"
 
     return out
 
@@ -67,6 +71,8 @@ def debug_status():
     description="Llama a Ollama usando el mismo cliente que la app.",
 )
 def debug_ollama(sample: str = "Hola, ¿quién eres?"):
+    if not settings.ollama_configured:
+        return {"ok": False, "error": "Ollama no configurado"}
     try:
         text = ollama_ask(
             "Eres un asistente de prueba.",

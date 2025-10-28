@@ -68,7 +68,7 @@ def send_verification_email(user: Dict) -> str:
     user_id = str(user.get("_id"))
     email = user.get("email")
     token = create_email_verification_token(user_id)
-    link = f"{settings.email_verify_link_base}{token}"
+    link = settings.email_verify_link(token)
 
     subject = "Verifica tu correo en AURA"
     html = f"""
@@ -108,4 +108,3 @@ def send_verification_code_email(user: Dict, code: str, expires_in_minutes: int)
     """
     text = f"Tu código de verificación de AURA es: {code}. Expira en {expires_in_minutes} minutos."
     send_email(email, subject, html, text)
-

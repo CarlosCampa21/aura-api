@@ -1,5 +1,5 @@
 """
-Logging setup for the application and Uvicorn integration.
+Configuración de logging para la aplicación e integración con Uvicorn.
 """
 import logging
 
@@ -11,4 +11,3 @@ def setup_logging(level: str = "INFO") -> None:
     )
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logging.getLogger(name).setLevel(getattr(logging, level.upper(), logging.INFO))
-
