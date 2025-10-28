@@ -1,5 +1,5 @@
 """
-API para horarios académicos (timetable y entries).
+Endpoints para horarios académicos (timetable y entries).
 """
 from fastapi import APIRouter, HTTPException, status, Query
 from typing import Optional, List, Dict, Any
@@ -39,9 +39,7 @@ from app.api.schemas.academics import (
     CourseOut,
 )
 
-
 router = APIRouter(prefix="/academics", tags=["Academics"])
-
 
 @router.post(
     "/timetables",

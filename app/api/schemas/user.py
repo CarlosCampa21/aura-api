@@ -93,10 +93,4 @@ class UserOut(BaseModel):
     updated_at: str
 
 
-class ProfileOut(BaseModel):
-    profile: UserProfile | None = None
-
-
-class ProfileUpdateOut(BaseModel):
-    message: str
-    profile: UserProfile | None = None
+"""

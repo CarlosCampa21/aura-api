@@ -97,18 +97,4 @@ class ChatAskOut(BaseModel):
     session_id: Optional[str] = None
 
 
-class ConversationCreateOut(BaseModel):
-    message: str
-    id: str
-    data: ConversationOut
-
-
-class ConversationsOut(BaseModel):
-    conversations: List[ConversationOut]
-
-
-class ChatAskResponse(ChatAskOut):
-    message: str
-    user_message_id: Optional[str] = None
-    assistant_message_id: Optional[str] = None
-    latency_ms: Optional[int] = None
+"""
