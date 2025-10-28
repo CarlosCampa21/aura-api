@@ -1,4 +1,5 @@
 # app/infrastructure/ai/openai_client.py
+"""Cliente singleton de OpenAI (crea si hay API key en settings)."""
 from typing import Optional
 from openai import OpenAI
 from app.core.config import settings

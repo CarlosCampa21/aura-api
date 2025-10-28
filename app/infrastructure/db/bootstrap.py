@@ -1,12 +1,16 @@
 """
-Define y aplica validadores (JSON Schema) e índices en Mongo.
-Se ejecuta al inicio de la app para garantizar una base consistente.
+Bootstrap de la base Mongo: define y aplica validadores (JSON Schema) e índices.
+Se ejecuta al inicio de la app para asegurar colecciones mínimas y consistencia.
+No tumba la app si algo falla; deja warnings silenciosos en casos no críticos.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import logging
 from pymongo.errors import PyMongoError
 from app.infrastructure.db.mongo import get_db
+
+_log = logging.getLogger("aura.mongo.bootstrap")
 
 
 def _collmod_or_create(name: str, validator: Dict[str, Any] | None) -> None:
@@ -34,9 +38,9 @@ def _collmod_or_create(name: str, validator: Dict[str, Any] | None) -> None:
                 # Intento final: algunos motores no aceptan collMod sin privilegios.
                 # En ese caso, seguimos sin romper el arranque.
                 pass
-        except PyMongoError:
+        except PyMongoError as e:
             # No aborta el arranque; solo deja sin validator estricto.
-            pass
+            _log.warning("No se pudo aplicar validator en '%s': %s", name, e)
 
 
 def _ensure_indexes(name: str, indexes: List[Dict[str, Any]]) -> None:
@@ -45,9 +49,9 @@ def _ensure_indexes(name: str, indexes: List[Dict[str, Any]]) -> None:
         keys = ix.pop("keys")
         try:
             coll.create_index(keys, **ix)
-        except PyMongoError:
+        except PyMongoError as e:
             # Ignora fallas de índice (e.g., ya existe o datos no únicos previos)
-            pass
+            _log.warning("No se pudo crear índice en '%s' (%s): %s", name, keys, e)
 
 
 def ensure_collections() -> None:

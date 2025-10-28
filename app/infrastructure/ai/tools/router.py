@@ -1,10 +1,9 @@
 """
-Orquestador de tool-calling con OpenAI.
+Orquestador de tool‑calling con OpenAI.
 
-El modelo decide si invocar el tool `get_schedule` para responder
-preguntas como "qué clase me toca". Si llama el tool, ejecutamos
-la función real y hacemos una segunda llamada al modelo para que
-forme la respuesta final al usuario.
+El modelo decide si invocar herramientas como `get_schedule` (horario) o
+`get_now` (hora actual). Si usa tools, ejecutamos la función real y, si hace falta,
+hacemos una segunda pasada para que el asistente forme la respuesta final.
 """
 from __future__ import annotations
 
@@ -17,6 +16,17 @@ from app.services.schedule_service import get_schedule_answer
 from app.core.time import now_text
 
 
+def _parse_args(s: Optional[str]) -> Dict[str, Any]:
+    """Intenta parsear argumentos JSON del tool; retorna {} en error o vacío."""
+    if not s:
+        return {}
+    try:
+        import json
+        return json.loads(s)
+    except Exception:
+        return {}
+
+
 def answer_with_tools(user_email: str, question: str, academic_context: str) -> Optional[str]:
     """
     Devuelve texto final si OpenAI decide usar tool-calling o responde directamente.
@@ -26,7 +36,7 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
     if not oa:
         return None
 
-    sys = (
+    sys_prompt = (
         "Eres Aura, asistente académico de la UABCS. "
         "Decides si usar herramientas. "
         "Primero puedes consultar la hora actual con get_now para anclarte a la fecha y zona horaria del alumno. "
@@ -77,7 +87,7 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
     ]
 
     messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": sys},
+        {"role": "system", "content": sys_prompt},
         {"role": "system", "content": f"Contexto académico breve:\n{academic_context}"},
         {"role": "user", "content": question},
     ]
@@ -112,12 +122,7 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
         if tc.type != "function":
             continue
         if tc.function and tc.function.name == "get_schedule":
-            import json
-            args = {}
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except Exception:
-                args = {}
+            args = _parse_args(getattr(tc.function, "arguments", None))
             when = str(args.get("when") or "").lower()
             day_name = args.get("day_name")
             tool_result = get_schedule_answer(user_email, when, day_name)
@@ -129,12 +134,7 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
             })
             called_schedule = True
         elif tc.function and tc.function.name == "get_now":
-            import json
-            args = {}
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except Exception:
-                args = {}
+            args = _parse_args(getattr(tc.function, "arguments", None))
             tz = args.get("tz")
             tool_result = now_text(user_email, tz)
             tool_messages.append({
@@ -162,12 +162,7 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
         if getattr(msg2, "tool_calls", None):
             for tc in msg2.tool_calls or []:
                 if tc.type == "function" and tc.function and tc.function.name == "get_schedule":
-                    import json
-                    args = {}
-                    try:
-                        args = json.loads(tc.function.arguments or "{}")
-                    except Exception:
-                        args = {}
+                    args = _parse_args(getattr(tc.function, "arguments", None))
                     when = str(args.get("when") or "").lower()
                     day_name = args.get("day_name")
                     return get_schedule_answer(user_email, when, day_name)

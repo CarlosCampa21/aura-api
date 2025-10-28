@@ -1,11 +1,14 @@
-# app/infrastructure/db/mongo.py
+"""Cliente MongoDB y helpers de conexión/estado."""
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
 from app.core.config import settings
 import certifi
+import logging
 
 _client: MongoClient | None = None
 _db = None
+
+_log = logging.getLogger("aura.mongo")
 
 def init_mongo():
     """
@@ -33,14 +36,14 @@ def init_mongo():
         _client = MongoClient(uri, **kwargs)
         _client.admin.command("ping")
         _db = _client[settings.mongo_db]
-        print("[Mongo] Conectado correctamente", flush=True)
+        _log.info("Mongo conectado correctamente")
     except ServerSelectionTimeoutError as e:
         # No tumbar la app: deja _db en None y loggea
-        print(f"[Mongo][WARN] No accesible (timeout): {e}", flush=True)
+        _log.warning("Mongo no accesible (timeout): %s", e)
         _client = None
         _db = None
     except Exception as e:
-        print(f"[Mongo][WARN] Error de conexión: {e}", flush=True)
+        _log.warning("Error de conexión a Mongo: %s", e)
         _client = None
         _db = None
 

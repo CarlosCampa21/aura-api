@@ -5,6 +5,7 @@ Usa `google.oauth2.id_token.verify_oauth2_token` con el `google_client_id` confi
 como audiencia. El frontend debe enviar el `id_token` obtenido de Google Sign-In
 (One Tap o OAuth).
 """
+import logging
 from typing import Dict, Any
 
 from google.oauth2 import id_token
@@ -15,6 +16,9 @@ from app.core.config import settings
 
 class GoogleTokenError(Exception):
     pass
+
+
+_log = logging.getLogger("aura.oauth")
 
 
 def verify_id_token(id_token_str: str) -> Dict[str, Any]:
@@ -37,5 +41,9 @@ def verify_id_token(id_token_str: str) -> Dict[str, Any]:
         if claims.get("iss") not in {"https://accounts.google.com", "accounts.google.com"}:
             raise GoogleTokenError("Emisor no válido")
         return claims
+    except GoogleTokenError:
+        # Re-lanzar errores propios sin alterar mensaje
+        raise
     except Exception as e:
-        raise GoogleTokenError(str(e))
+        _log.exception("Error verificando Google ID Token: %s", e)
+        raise GoogleTokenError("Token de Google inválido")

@@ -1,4 +1,4 @@
-# app/services/ai_service.py
+"""Cliente LLM de alto nivel (OpenAI → fallback → Ollama)."""
 from openai import BadRequestError
 import logging
 from app.core.config import settings
@@ -11,6 +11,7 @@ SYSTEM_PROMPT = (
     "Si faltan datos, dilo y sugiere qué falta."
 )
 
+
 def ask_llm(question: str, context: str = "") -> str:
     """
     Estrategia:
@@ -21,13 +22,14 @@ def ask_llm(question: str, context: str = "") -> str:
     user_prompt = f"Contexto:\n{context}\n---\nPregunta: {question}"
     oa = get_openai()
 
-    # 1) y 2) → OpenAI si hay API key
     if oa:
         try:
             resp = oa.chat.completions.create(
                 model=settings.openai_model_primary,
-                messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                          {"role": "user", "content": user_prompt}],
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
                 temperature=0.2,
             )
             out = (resp.choices[0].message.content or "").strip()
@@ -37,8 +39,10 @@ def ask_llm(question: str, context: str = "") -> str:
             try:
                 resp = oa.chat.completions.create(
                     model=settings.openai_model_fallback,
-                    messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                              {"role": "user", "content": user_prompt}],
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
                     temperature=0.2,
                 )
                 out = (resp.choices[0].message.content or "").strip()
@@ -50,12 +54,15 @@ def ask_llm(question: str, context: str = "") -> str:
 
     # 3) → Ollama (sin key o error en OpenAI)
     try:
-        return ollama_ask(
-            SYSTEM_PROMPT,
-            user_prompt,
-            temperature=0.2,
-            timeout=settings.ollama_timeout_seconds,
-        ) or "Sin respuesta."
+        return (
+            ollama_ask(
+                SYSTEM_PROMPT,
+                user_prompt,
+                temperature=0.2,
+                timeout=settings.ollama_timeout_seconds,
+            )
+            or "Sin respuesta."
+        )
     except Exception as e:
-        logging.getLogger("aura.ai").exception("Ollama fallback failed: %s", e)
+        logging.getLogger("aura.ai").exception("Fallo en Ollama fallback: %s", e)
         return "Aura (local): no pude consultar el modelo."

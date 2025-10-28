@@ -1,4 +1,4 @@
-# app/infrastructure/ai/ollama_client.py
+"""Cliente HTTP mínimo para Ollama (chat y helper ask)."""
 import requests
 from app.core.config import settings
 

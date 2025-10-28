@@ -43,10 +43,14 @@ def create_access_token(*, user: Dict[str, Any]) -> str:
 
 
 def verify_access_token(token: str) -> Dict[str, Any]:
+    """Decodifica y valida firma/expiración.
+
+    Devuelve el payload o levanta ValueError con mensaje en español si es inválido.
     """
-    Decodifica y valida firma/expiración. Devuelve payload.
-    """
-    return pyjwt.decode(token, key=settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    try:
+        return pyjwt.decode(token, key=settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except Exception:
+        raise ValueError("Token inválido")
 
 
 def create_email_code_token(*, user_id: str, expires_in_minutes: int | None = None) -> str:
@@ -68,7 +72,14 @@ def create_email_code_token(*, user_id: str, expires_in_minutes: int | None = No
 
 
 def verify_email_code_token(token: str) -> Dict[str, Any]:
-    payload = pyjwt.decode(token, key=settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    """Valida token corto de verificación de email.
+
+    Devuelve el payload o levanta ValueError en caso de token inválido/propósito incorrecto.
+    """
+    try:
+        payload = pyjwt.decode(token, key=settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except Exception:
+        raise ValueError("Token de verificación inválido")
     if payload.get("purpose") != "email_code":
         raise ValueError("Token de verificación inválido")
     return payload
