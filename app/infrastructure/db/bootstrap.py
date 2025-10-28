@@ -428,3 +428,40 @@ def ensure_collections() -> None:
             {"keys": [("user_id", 1), ("tags", 1)], "name": "ix_note_user_tags"},
         ],
     )
+
+    # Biblioteca de documentos institucionales (formularios, formatos, PDFs)
+    library_doc_validator = {
+        "bsonType": "object",
+        "required": [
+            "title",
+            "status",
+            "created_at",
+            "updated_at",
+        ],
+        "properties": {
+            "title": {"bsonType": "string"},
+            "aliases": {"bsonType": "array", "items": {"bsonType": "string"}},
+            "tags": {"bsonType": "array", "items": {"bsonType": "string"}},
+            "department": {"bsonType": ["string", "null"]},
+            "program": {"bsonType": ["string", "null"]},
+            "campus": {"bsonType": ["string", "null"]},
+            "status": {"bsonType": "string", "enum": ["active", "archived"]},
+            # Almacenamiento (R2 / S3 compatible)
+            "url": {"bsonType": ["string", "null"]},
+            "content_type": {"bsonType": ["string", "null"]},
+            "size": {"bsonType": ["int", "null"]},
+            # Auditoría
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("library_doc", library_doc_validator)
+    _ensure_indexes(
+        "library_doc",
+        [
+            {"keys": [("status", 1)], "name": "ix_lib_status"},
+            # Búsqueda simple por campos comunes
+            {"keys": [("title", "text"), ("aliases", "text"), ("tags", "text")], "name": "txt_lib_title_aliases_tags"},
+        ],
+    )

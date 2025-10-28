@@ -20,7 +20,7 @@ from app.repositories.messages_repo import (
     insert_message,
     list_messages as repo_list_messages,
 )
-from app.repositories.files_repo_async import upload_bytes_iter
+from app.repositories.files_repo_r2 import upload_uploadfile_to_r2
 from app.repositories.auth_repo import get_user_by_id
 from app.services.note_service import insert_note as insert_note_doc
 from fastapi.responses import StreamingResponse
@@ -109,7 +109,7 @@ def create_message(payload: MessageCreate):
     status_code=status.HTTP_201_CREATED,
     response_model=dict,
     summary="Subir archivo y crear mensaje",
-    description="Sube un archivo (imagen/PDF) a GridFS y crea un mensaje de usuario con ese adjunto.",
+    description="Sube un archivo (imagen/PDF) a Cloudflare R2 y crea un mensaje de usuario con ese adjunto.",
 )
 async def create_message_with_upload(
     conversation_id: str = Form(...),
@@ -126,15 +126,8 @@ async def create_message_with_upload(
                     break
                 yield data
 
-        file_id = await upload_bytes_iter(
-            filename=file.filename or "file",
-            content_type=file.content_type or "application/octet-stream",
-            data_iter=_chunks(),
-            metadata={"source": "chat"},
-        )
-
-        # Guarda mensaje con el adjunto. Usamos una ruta relativa para facilitar su consumo en el front.
-        attachment_ref = f"/files/{file_id}"
+        # Sube a R2 y obten la URL pública
+        attachment_ref = await upload_uploadfile_to_r2(file, prefix="chat/")
         inserted_id = insert_message({
             "conversation_id": conversation_id,
             "user_id": user_id,
@@ -159,7 +152,7 @@ async def create_message_with_upload(
             session_id=session_id,
         ).model_dump()
 
-        return {"message": "ok", "id": inserted_id, "data": out, "file_id": file_id}
+        return {"message": "ok", "id": inserted_id, "data": out, "url": attachment_ref}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo subir/crear el mensaje: {e}")
 

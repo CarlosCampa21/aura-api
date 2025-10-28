@@ -1,7 +1,8 @@
 fastapi
 uvicorn[standard]
 pymongo
-motor
+python-multipart
+boto3
 certifi
 pydantic-settings
 python-dotenv

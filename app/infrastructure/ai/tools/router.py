@@ -13,6 +13,7 @@ from openai import BadRequestError
 from app.core.config import settings
 from app.infrastructure.ai.openai_client import get_openai
 from app.services.schedule_service import get_schedule_answer
+from app.services.library_service import search_document_answer
 from app.core.time import now_text
 
 
@@ -83,7 +84,22 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
                     "additionalProperties": False,
                 },
             },
-        }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_document",
+                "description": "Busca un documento institucional (ej. formatos, PDFs) y devuelve el mejor match con enlace",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Descripción del documento a buscar (ej. carta presentación prácticas)"},
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+            },
+        },
     ]
 
     messages: List[Dict[str, Any]] = [
@@ -118,6 +134,7 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
     # segunda pasada para permitir una acción posterior.
     tool_messages: List[Dict[str, Any]] = []
     called_schedule = False
+    called_document = False
     for tc in msg.tool_calls or []:
         if tc.type != "function":
             continue
@@ -143,9 +160,24 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
                 "name": "get_now",
                 "content": tool_result,
             })
+        elif tc.function and tc.function.name == "get_document":
+            args = _parse_args(getattr(tc.function, "arguments", None))
+            q = str(args.get("query") or "")
+            tool_result = search_document_answer(q) or "No encontré un documento con esa descripción."
+            tool_messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "name": "get_document",
+                "content": tool_result,
+            })
+            called_document = True
     # Si ya obtuvimos horario, respondemos con él directamente
     if called_schedule and tool_messages:
         return next((m["content"] for m in reversed(tool_messages) if m.get("name") == "get_schedule"), tool_messages[-1]["content"])
+
+    # Si obtuvimos un documento, respondemos con él directamente
+    if called_document and tool_messages:
+        return next((m["content"] for m in reversed(tool_messages) if m.get("name") == "get_document"), tool_messages[-1]["content"])
 
     # Si sólo hubo get_now (o ningún tool), hacemos una segunda pasada
     if tool_messages:
