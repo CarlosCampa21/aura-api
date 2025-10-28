@@ -1,21 +1,18 @@
 # app/main.py
 from fastapi import FastAPI, status
-from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.infrastructure.db.mongo import init_mongo, db_ready
 from app.infrastructure.db.bootstrap import ensure_collections
 from app.api.router import api_router
+from app.core.logging import setup_logging
+from app.core.middleware import add_middlewares
+from app.core.exceptions import register_exception_handlers
 
+setup_logging()
 app = FastAPI(title=settings.app_name)
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+add_middlewares(app)
+register_exception_handlers(app)
 
 # Startup
 @app.on_event("startup")
