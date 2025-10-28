@@ -37,5 +37,3 @@ class NoteOut(BaseModel):
     created_at: str
     updated_at: str
 
-
-"""
