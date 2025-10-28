@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, status, Request, Depends, Query
  
 
 # Capa de dominio: esquemas de autenticación (valores y validaciones)
-from app.domain.auth.schemas import (
+from app.api.schemas.auth import (
     RegisterPayload,
     UserRegisterInput,
     VerifyEmailCodePayload,
@@ -34,7 +34,7 @@ def register(payload: RegisterPayload):
     """
     Registro de usuarios.
 
-    - La validación y normalización del payload viven en `app.domain.auth.schemas`.
+    - La validación y normalización del payload viven en `app.api.schemas.auth`.
     - La lógica (hash, insertar, correo, token de verificación) vive en `app.services.auth_service`.
     """
     try:

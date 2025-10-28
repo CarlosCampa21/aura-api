@@ -91,3 +91,4 @@ class UserOut(BaseModel):
     profile: Optional[UserProfile] = None
     created_at: str
     updated_at: str
+

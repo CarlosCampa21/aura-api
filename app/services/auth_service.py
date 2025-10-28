@@ -18,7 +18,7 @@ from app.repositories.user_repo import insert_user
 from app.services import email_service, token_service, google_oauth
 
 # Esquemas de la capa de dominio (auth)
-from app.domain.auth.schemas import (
+from app.api.schemas.auth import (
     RegisterPayload,
     SendVerificationPayload,
 )

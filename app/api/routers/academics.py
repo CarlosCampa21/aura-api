@@ -3,7 +3,7 @@ API para horarios académicos (timetable y entries).
 """
 from fastapi import APIRouter, HTTPException, status, Query
 from typing import Optional, List, Dict, Any
-from app.domain.academics.schemas import (
+from app.api.schemas.academics import (
     TimetableCreate,
     TimetableOut,
     TimetableEntryCreate,
@@ -28,7 +28,7 @@ from app.repositories.academics_catalog_repo import (
     insert_course,
     list_courses,
 )
-from app.domain.academics.schemas import (
+from app.api.schemas.academics import (
     DepartmentCreate,
     DepartmentOut,
     ProgramCreate,

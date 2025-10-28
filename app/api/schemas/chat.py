@@ -95,3 +95,4 @@ class ChatAskOut(BaseModel):
     assistant_message: MessageOut
     model: Optional[str] = None
     session_id: Optional[str] = None
+

@@ -3,7 +3,7 @@ Endpoints para `note` (singular, convención en inglés).
 """
 from fastapi import APIRouter, HTTPException, status, Query
 from typing import Optional
-from app.domain.note.schemas import NoteCreate, NoteOut
+from app.api.schemas.note import NoteCreate, NoteOut
 from app.repositories.note_repo import insert_note, list_notes
 
 

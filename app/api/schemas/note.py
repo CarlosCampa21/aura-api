@@ -36,3 +36,4 @@ class NoteOut(BaseModel):
     related_conversation_id: Optional[str] = None
     created_at: str
     updated_at: str
+

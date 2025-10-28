@@ -3,7 +3,7 @@ Endpoints para chat conversacional (conversations/messages).
 """
 from fastapi import APIRouter, HTTPException, status, Query, Header, Request
 from typing import Optional
-from app.domain.chat.schemas import (
+from app.api.schemas.chat import (
     ConversationCreate,
     ConversationOut,
     MessageCreate,
