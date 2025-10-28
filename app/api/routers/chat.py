@@ -1,7 +1,7 @@
 """
 Endpoints para chat conversacional (conversations/messages).
 """
-from fastapi import APIRouter, HTTPException, status, Query, Header, Request
+from fastapi import APIRouter, HTTPException, status, Query, Header, Request, UploadFile, File, Form
 import logging
 from typing import Optional
 from app.api.schemas.chat import (
@@ -20,6 +20,7 @@ from app.repositories.messages_repo import (
     insert_message,
     list_messages as repo_list_messages,
 )
+from app.repositories.files_repo_async import upload_bytes_iter
 from app.repositories.auth_repo import get_user_by_id
 from app.services.note_service import insert_note as insert_note_doc
 from fastapi.responses import StreamingResponse
@@ -101,6 +102,66 @@ def create_message(payload: MessageCreate):
         return {"message": "ok", "id": inserted_id, "data": out}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo crear el mensaje: {e}")
+
+
+@router.post(
+    "/messages/upload",
+    status_code=status.HTTP_201_CREATED,
+    response_model=dict,
+    summary="Subir archivo y crear mensaje",
+    description="Sube un archivo (imagen/PDF) a GridFS y crea un mensaje de usuario con ese adjunto.",
+)
+async def create_message_with_upload(
+    conversation_id: str = Form(...),
+    user_id: str | None = Form(default=None),
+    session_id: str | None = Form(default=None),
+    file: UploadFile = File(...),
+):
+    try:
+        async def _chunks():
+            size = 256 * 1024
+            while True:
+                data = await file.read(size)
+                if not data:
+                    break
+                yield data
+
+        file_id = await upload_bytes_iter(
+            filename=file.filename or "file",
+            content_type=file.content_type or "application/octet-stream",
+            data_iter=_chunks(),
+            metadata={"source": "chat"},
+        )
+
+        # Guarda mensaje con el adjunto. Usamos una ruta relativa para facilitar su consumo en el front.
+        attachment_ref = f"/files/{file_id}"
+        inserted_id = insert_message({
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "role": "user",
+            "content": (file.filename or "Archivo adjunto"),
+            "attachments": [attachment_ref],
+            "session_id": session_id,
+        })
+
+        out = MessageOut(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            role="user",
+            content=(file.filename or "Archivo adjunto"),
+            attachments=[attachment_ref],
+            citations=[],
+            model_snapshot=None,
+            tokens_input=None,
+            tokens_output=None,
+            error=None,
+            created_at="",
+            session_id=session_id,
+        ).model_dump()
+
+        return {"message": "ok", "id": inserted_id, "data": out, "file_id": file_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo subir/crear el mensaje: {e}")
 
 
 @router.get(
