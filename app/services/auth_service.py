@@ -10,14 +10,14 @@ from argon2 import PasswordHasher
 from argon2.low_level import Type
 
 from app.core.config import settings
-from app.repositories import auth_repository as repo
+from app.repositories import auth_repo as repo
 from app.infrastructure.security.token_service import create_access_token
 
 # Nuevos imports para casos de uso de registro/verificación
 from app.repositories.user_repo import insert_user
-from app.infrastructure.email import email_service
+from app.infrastructure.email import email_client
 from app.infrastructure.security import token_service
-from app.infrastructure.http import google_oauth
+from app.infrastructure.http import google_oauth_client
 
 # Esquemas de la capa de dominio (auth)
 from app.api.schemas.auth import (
@@ -171,12 +171,12 @@ def register_user(payload: RegisterPayload) -> Dict[str, Any]:
             from datetime import datetime, timedelta, timezone
             import hashlib
 
-            code = email_service.generate_numeric_code(6)
+            code = email_client.generate_numeric_code(6)
             code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
             minutes = settings.email_code_expire_minutes
             expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
             repo.set_email_verification_code(inserted_id, code_hash, expires_at)
-            email_service.send_verification_code_email(user_doc, code, minutes)
+            email_client.send_verification_code_email(user_doc, code, minutes)
             vtoken = token_service.create_email_code_token(user_id=inserted_id, expires_in_minutes=minutes)
             return {"message": "ok", "id": inserted_id, "verification_token": vtoken, "expires_in_minutes": minutes}
         except Exception as ex:
@@ -274,13 +274,13 @@ def send_verification(payload: SendVerificationPayload) -> Dict[str, Any]:
     if not u:
         return {"message": "ok"}
 
-    code = email_service.generate_numeric_code(6)
+    code = email_client.generate_numeric_code(6)
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
     minutes = settings.email_code_expire_minutes
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
 
     repo.set_email_verification_code(str(u["_id"]), code_hash, expires_at)
-    email_service.send_verification_code_email(u, code, minutes)
+    email_client.send_verification_code_email(u, code, minutes)
     vtoken = token_service.create_email_code_token(user_id=str(u["_id"]), expires_in_minutes=minutes)
     return {"message": "ok", "expires_in_minutes": minutes, "verification_token": vtoken}
 
@@ -289,7 +289,7 @@ def login_with_google_token(*, id_token: str, device_id: str, ip: str, user_agen
     """
     Verifica el ID Token de Google, crea el usuario si no existe y emite tokens.
     """
-    claims = google_oauth.verify_id_token(id_token)
+    claims = google_oauth_client.verify_id_token(id_token)
     email = str(claims.get("email", "")).lower()
     sub = claims.get("sub")  # google_id
     email_verified = bool(claims.get("email_verified", False))

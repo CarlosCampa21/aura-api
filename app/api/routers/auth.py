@@ -22,7 +22,7 @@ from app.api.schemas.auth import (
 from app.services import auth_service as service
 from app.api.deps import get_current_user
 from app.core import rate_limit
-from app.repositories import auth_repository as repo
+from app.repositories import auth_repo as repo
 # Nota: token_service se usa dentro de los servicios; la API no lo necesita directamente.
 
 
@@ -144,7 +144,7 @@ def refresh(payload: RefreshPayload, request: Request):
         new_raw, _ = service.rotate_refresh_token(current_raw=payload.refresh_token, device_id=payload.device_id, ip=ip, user_agent=ua)
         # Emitir nuevo access token para el mismo usuario de ese refresh
         # Recupera el RT actual para obtener user_id
-        from app.repositories.auth_repository import get_refresh_token_by_hash
+        from app.repositories.auth_repo import get_refresh_token_by_hash
         import hashlib
 
         cur = get_refresh_token_by_hash(hashlib.sha256(payload.refresh_token.encode("utf-8")).hexdigest())

@@ -9,7 +9,7 @@ from fastapi import HTTPException, Header
 from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 
 from app.infrastructure.security.token_service import verify_access_token
-from app.repositories import auth_repository as repo
+from app.repositories import auth_repo as repo
 
 
 def get_current_user(authorization: Optional[str] = Header(default=None)) -> Dict[str, Any]:
@@ -63,4 +63,3 @@ def get_current_user_loose(authorization: Optional[str] = Header(default=None)) 
     if u.get("token_version", 0) != token_version:
         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token expirado")
     return u
-
