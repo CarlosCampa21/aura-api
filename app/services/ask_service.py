@@ -1,6 +1,6 @@
 # app/services/ask_service.py
 from app.infrastructure.ai.ai_service import ask_llm
-from app.services.context_builder import build_academic_context
+from app.services.context_service import build_academic_context
 from app.services.schedule_service import try_answer_schedule
 from app.infrastructure.ai.tools.router import answer_with_tools
 
