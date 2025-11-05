@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model_primary: str = "gpt-4o-mini"
     openai_model_fallback: str = "gpt-4o-mini"
+    # Embeddings (RAG)
+    # Nota: para Atlas Vector Search con text-embedding-3-small (1536 dims)
+    openai_embeddings_model: str = "text-embedding-3-small"
+    openai_embeddings_dims: int = 1536
 
     # Ollama
     ollama_url: str = "http://localhost:11434"

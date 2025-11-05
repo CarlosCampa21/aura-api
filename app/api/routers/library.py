@@ -36,16 +36,33 @@ async def upload_document(
     department: Optional[str] = Form(default=None),
     program: Optional[str] = Form(default=None),
     campus: Optional[str] = Form(default=None),
+    prefix: Optional[str] = Form(default="library/", description="Prefijo en R2, p.ej. library/docentes/"),
 ):
     try:
         # Validación simple de tipo
         ctype = (file.content_type or "").lower()
-        allowed = {"application/pdf", "image/jpeg", "image/png", "image/webp"}
+        allowed = {
+            # Documentos
+            "application/pdf",
+            "text/plain",
+            "text/markdown",
+            "text/csv",
+            "application/csv",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # docx
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",       # xlsx
+            # Imágenes comunes (por si se requieren en otros flujos)
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+        }
         if ctype not in allowed:
             raise HTTPException(status_code=415, detail=f"Tipo no permitido: {ctype}")
 
         # Sube a R2
-        url = await upload_uploadfile_to_r2(file, prefix="library/")
+        pf = (prefix or "library/").strip()
+        if not pf.endswith("/"):
+            pf = pf + "/"
+        url = await upload_uploadfile_to_r2(file, prefix=pf)
 
         # Parseo de listas
         def _split_csv(s: Optional[str]) -> List[str]:

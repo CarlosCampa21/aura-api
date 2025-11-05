@@ -4,6 +4,7 @@ from app.services.context_service import build_academic_context
 from app.services.schedule_service import try_answer_schedule
 from app.infrastructure.ai.tools.router import answer_with_tools
 import re
+from app.services.rag_search_service import answer_with_rag
 
 
 def ask(user_email: str, question: str) -> dict:
@@ -18,7 +19,21 @@ def ask(user_email: str, question: str) -> dict:
     # 1) Construye contexto breve
     ctx = build_academic_context(user_email)
 
-    # 2) Si hay OpenAI, deja que el modelo decida tool/respuesta
+    # 2) RAG primero: si hay evidencia útil, nos quedamos con esa respuesta
+    try:
+        rag = answer_with_rag(question, k=5)
+        if rag and rag.get("used_context") and rag.get("answer"):
+            ans = str(rag.get("answer") or "")
+            return {
+                "pregunta": question,
+                "respuesta": ans,
+                "contexto_usado": True,
+                "attachments": _extract_urls(ans),
+            }
+    except Exception:
+        pass
+
+    # 2b) Si no hubo contexto del RAG, dejamos que el modelo decida tool/respuesta
     oa_answer = answer_with_tools(user_email, question, ctx)
     if oa_answer:
         return {

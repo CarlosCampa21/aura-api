@@ -12,3 +12,7 @@ email-validator
 argon2-cffi
 PyJWT
 google-auth
+chardet
+pypdf
+python-docx
+openpyxl

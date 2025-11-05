@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 import logging
 from pymongo.errors import PyMongoError
 from app.infrastructure.db.mongo import get_db
+from app.core.config import settings
 
 _log = logging.getLogger("aura.mongo.bootstrap")
 
@@ -465,3 +466,86 @@ def ensure_collections() -> None:
             {"keys": [("title", "text"), ("aliases", "text"), ("tags", "text")], "name": "txt_lib_title_aliases_tags"},
         ],
     )
+
+    # --- RAG: chunks de texto + embeddings ---
+    # Colección con los fragmentos de cada documento (texto normalizado) y su embedding
+    # para usar Atlas Vector Search. La política es tolerante: si no podemos aplicar
+    # validator o crear índices (por permisos), no detenemos el arranque.
+    dims = int(getattr(settings, "openai_embeddings_dims", 1536))
+    library_chunk_validator = {
+        "bsonType": "object",
+        "required": [
+            "doc_id",
+            "chunk_index",
+            "text",
+            "created_at",
+            "updated_at",
+        ],
+        "properties": {
+            "doc_id": {"bsonType": "objectId"},
+            "chunk_index": {"bsonType": "int", "minimum": 0},
+            "page": {"bsonType": ["int", "null"], "minimum": 1},
+            "text": {"bsonType": "string", "minLength": 1},
+            "embedding": {
+                "bsonType": ["array", "null"],
+                "items": {"bsonType": ["double", "int"]},
+                "minItems": dims,
+                "maxItems": dims,
+            },
+            "meta": {"bsonType": ["object", "null"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("library_chunk", library_chunk_validator)
+    _ensure_indexes(
+        "library_chunk",
+        [
+            {"keys": [("doc_id", 1), ("chunk_index", 1)], "name": "ix_chunk_doc_idx"},
+            {"keys": [("doc_id", 1)], "name": "ix_chunk_doc"},
+        ],
+    )
+
+    # Intenta crear/actualizar un Search Index de Atlas para vector search.
+    # No es crítico para desarrollo local y puede requerir privilegios específicos en Atlas.
+    try:
+        _ensure_vector_search_index("library_chunk", dims)
+    except Exception as e:
+        _log.warning("No se pudo asegurar search index vectorial: %s", e)
+
+
+def _ensure_vector_search_index(coll_name: str, dims: int) -> None:
+    """Crea/actualiza un Atlas Search Index con campo vectorial `embedding`.
+
+    Usa el comando `createSearchIndexes` cuando esté disponible (Atlas). Ignora errores
+    silenciosamente si el cluster no soporta el comando o faltan permisos.
+    """
+    db = get_db()
+    try:
+        # Definición mínima para vector search (cosine) en 'embedding'
+        definition = {
+            "mappings": {
+                "dynamic": False,
+                "fields": {
+                    "embedding": {
+                        "type": "knnVector",
+                        "similarity": "cosine",
+                        "dimensions": int(dims),
+                    },
+                    # Campo de texto opcional si luego querremos búsqueda híbrida
+                    "text": {"type": "string"},
+                },
+            }
+        }
+        # Si ya existe un índice llamado 'rag_embedding', Atlas lo reemplaza si soporta upsert;
+        # en otros casos, fallará silenciosamente y no afecta el arranque.
+        db.command({
+            "createSearchIndexes": coll_name,
+            "indexes": [
+                {"name": "rag_embedding", "definition": definition}
+            ],
+        })
+    except Exception as e:  # pragma: no cover
+        # Si el comando no existe (self-hosted o permisos insuficientes), continuamos.
+        _log.info("Atlas createSearchIndexes no disponible: %s", e)

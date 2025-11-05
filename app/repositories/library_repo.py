@@ -102,3 +102,24 @@ def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
     if d.get("url"):
         d["file_url"] = str(d["url"])
     return d
+
+
+def list_active_documents(limit: int = 100, skip: int = 0) -> list[Dict[str, Any]]:
+    """Lista documentos activos con campos mínimos para ingesta."""
+    db = get_db()
+    projection = {
+        "title": 1,
+        "url": 1,
+        "content_type": 1,
+        "status": 1,
+    }
+    cur = db[COLL].find({"status": "active", "url": {"$ne": None}}, projection).skip(int(skip)).limit(int(limit))
+    out: list[Dict[str, Any]] = []
+    for d in cur:
+        out.append({
+            "id": str(d.get("_id")),
+            "title": d.get("title") or "",
+            "url": d.get("url"),
+            "content_type": d.get("content_type"),
+        })
+    return out
