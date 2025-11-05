@@ -5,6 +5,7 @@ from app.services.schedule_service import try_answer_schedule
 from app.infrastructure.ai.tools.router import answer_with_tools
 import re
 from app.services.rag_search_service import answer_with_rag
+from app.core.time import now_text, now_time_text, now_date_text
 
 
 def ask(user_email: str, question: str) -> dict:
@@ -18,6 +19,28 @@ def ask(user_email: str, question: str) -> dict:
     """
     # 1) Construye contexto breve
     ctx = build_academic_context(user_email)
+
+    # 2) Short-circuit: preguntas directas de fecha/hora
+    qlow = (question or "").lower().strip()
+    # Solo hora
+    if re.search(r"\b(qu[eé]\s*hora\s*es|hora\s*actual)\b", qlow):
+        text_now = now_time_text(user_email)
+        return {
+            "pregunta": question,
+            "respuesta": text_now,
+            "contexto_usado": True,
+            "attachments": _extract_urls(text_now),
+        }
+
+    # Solo fecha/día
+    if re.search(r"\b(que\s*d[ií]a\s*es\s*hoy|qu[eé]\s*fecha\s*es)\b", qlow):
+        text_now = now_date_text(user_email)
+        return {
+            "pregunta": question,
+            "respuesta": text_now,
+            "contexto_usado": True,
+            "attachments": _extract_urls(text_now),
+        }
 
     # 2) RAG primero: si hay evidencia útil, nos quedamos con esa respuesta
     try:
