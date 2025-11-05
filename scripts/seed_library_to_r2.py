@@ -16,6 +16,7 @@ import json
 import mimetypes
 import os
 from typing import Dict, Any
+from datetime import datetime, timezone
 
 from pymongo import MongoClient
 
@@ -51,6 +52,9 @@ def main():
     client = MongoClient(settings.mongo_uri)
     db = client[settings.mongo_db]
 
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     count = 0
     for name in sorted(os.listdir(base)):
         if name.startswith(".") or name == "manifest.json":
@@ -70,6 +74,7 @@ def main():
         title = meta.get("title") or os.path.splitext(name)[0].replace("_", " ").strip()
         aliases = meta.get("aliases") or []
         tags = meta.get("tags") or []
+        now = _now_iso()
         doc = {
             "title": title,
             "aliases": aliases,
@@ -81,6 +86,8 @@ def main():
             "url": url,
             "content_type": content_type,
             "size": os.path.getsize(path),
+            "created_at": now,
+            "updated_at": now,
         }
         db["library_doc"].insert_one(doc)
         count += 1
