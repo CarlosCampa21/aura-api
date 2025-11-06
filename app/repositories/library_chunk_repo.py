@@ -87,6 +87,7 @@ def knn_search(vector: list[float], k: int = 5, index_name: str = "rag_embedding
                 "doc_id": 1,
                 "chunk_index": 1,
                 "text": 1,
+                "meta": 1,
                 "score": {"$meta": "searchScore"},
             }
         },
@@ -100,6 +101,7 @@ def knn_search(vector: list[float], k: int = 5, index_name: str = "rag_embedding
                 "doc_id": str(r.get("doc_id")),
                 "chunk_index": int(r.get("chunk_index", 0)),
                 "text": r.get("text") or "",
+                "meta": r.get("meta") or {},
                 "score": float(r.get("score", 0.0)),
             }
         )

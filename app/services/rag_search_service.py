@@ -5,7 +5,7 @@ dar más señal al LLM (ej., categoría "docentes", tag "dasc").
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Dict
 
 from app.infrastructure.ai.embeddings import embed_texts
 from app.repositories.library_chunk_repo import knn_search
@@ -16,12 +16,12 @@ from app.infrastructure.ai.ai_service import ask_llm
 
 
 SYSTEM = (
-    "Eres AURA. Responde en español, cordial y conciso, en una o dos oraciones. "
-    "No incluyas URLs, ni citas, ni referencias a fuentes. "
-    "Usa exclusivamente la evidencia provista (títulos, etiquetas y extractos). "
-    "Si el nombre de una persona aparece en el título o el extracto, responde en afirmativo con 'Sí' y resume su rol/áreas. "
-    "Solo menciona 'DASC' si aparece explícito en el texto o en las etiquetas. "
-    "Si no hay evidencia sobre la persona preguntada, indica que no tienes datos suficientes."
+    "Eres AURA. Responde en español, cordial y conciso (1–2 oraciones). "
+    "No incluyas URLs ni referencias explícitas a 'fuentes'. "
+    "Usa exclusivamente la evidencia provista (título, etiquetas, sección y extractos). "
+    "Si la pregunta es de calendario/fechas y el contexto incluye 'Inicio de clases' o 'Inicio de labores', responde con la(s) fecha(s) correspondiente(s). "
+    "Si preguntan 'inicio del semestre', interpreta como fecha de inicio de clases; si hay variantes (escolarizados / no escolarizados), acláralas brevemente. "
+    "Si no hay evidencia suficiente, dilo con claridad."
 )
 
 
@@ -41,18 +41,20 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
         return {"answer": text, "used_context": False}
 
     # Enriquecer con metadatos (título/tags) del documento
+    # Permitir varios extractos por documento (máx 3) para evitar perder señales.
+    MAX_SNIPPETS_PER_DOC = 3
     snippets: List[str] = []
-    seen_docs: set[str] = set()
+    per_doc_count: Dict[str, int] = {}
     for h in hits:
         doc_id = str(h.get("doc_id"))
         if not doc_id:
             continue
-        # Limita a un extracto por documento para diversidad
-        if doc_id in seen_docs:
+        # Limita a N extractos por documento
+        if per_doc_count.get(doc_id, 0) >= MAX_SNIPPETS_PER_DOC:
             continue
-        seen_docs.add(doc_id)
         meta_title = ""
         meta_tags: list[str] = []
+        section = ""
         try:
             d = get_document(doc_id)
             if d:
@@ -60,13 +62,21 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
                 meta_tags = [str(t).lower() for t in (d.get("tags") or [])]
         except Exception:
             pass
+        try:
+            m = h.get("meta") or {}
+            section = str(m.get("section") or "")
+        except Exception:
+            section = ""
         snippet_text = str(h.get("text") or "")
         # Arma línea con metadatos + extracto
         tag_str = ",".join(meta_tags) if meta_tags else ""
         prefix = f"titulo: {meta_title}"
         if tag_str:
             prefix += f" | etiquetas: {tag_str}"
+        if section:
+            prefix += f" | seccion: {section}"
         snippets.append(prefix + f"\nextracto: {snippet_text}")
+        per_doc_count[doc_id] = per_doc_count.get(doc_id, 0) + 1
     ctx = _build_context(snippets)
 
     oa = get_openai()
