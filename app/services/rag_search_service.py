@@ -108,13 +108,13 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
             frequency_penalty=settings.chat_frequency_penalty,
         )
         out = (resp.choices[0].message.content or "").strip()
-        followup = _suggest_followup(question)
+        followup = _suggest_followup(question) if settings.chat_followups_enabled else ""
         # Nota: no devolvemos citas ni chunks para evitar paréntesis en UI
         return {"answer": out or "Sin respuesta.", "used_context": True, "came_from": "rag", "citation": "", "source_chunks": [], "followup": followup}
 
     # Fallback al pipeline genérico si no hay OpenAI
     text = ask_llm(question, ctx)
-    followup = _suggest_followup(question)
+    followup = _suggest_followup(question) if settings.chat_followups_enabled else ""
     return {"answer": text, "used_context": True, "came_from": "rag", "citation": "", "source_chunks": [], "followup": followup}
 
 

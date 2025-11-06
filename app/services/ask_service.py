@@ -9,6 +9,7 @@ from app.services.rag_search_service import answer_with_rag
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.core.time import get_user_tz
+from app.core.config import settings
 
 
 def ask(user_email: str, question: str, history: list[dict] | None = None) -> dict:
@@ -140,6 +141,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     try:
         q_eff = _rewrite_temporal_phrases(question, user_email)
         q_eff = _bias_asueto_query(q_eff)
+        q_eff = _bias_exam_query(q_eff)
         rag = answer_with_rag(q_eff, k=10)
         if rag and rag.get("used_context") and rag.get("answer"):
             ans = _strip_citations(str(rag.get("answer") or ""))
@@ -150,7 +152,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 "came_from": rag.get("came_from") or "rag",
                 "citation": rag.get("citation") or "",
                 "source_chunks": rag.get("source_chunks") or [],
-                "followup": _maybe_contextual_followup(question, ans, history),
+                "followup": _maybe_contextual_followup(question, ans, history) if settings.chat_followups_enabled else "",
                 "offer_code": _offer_code_for(question, ans, _detect_topic(question, ans)),
                 "attachments": _extract_urls(ans),
             }
@@ -167,7 +169,9 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "came_from": oa_answer.get("origin") or "tool",
             "citation": "",
             "source_chunks": [],
-            "followup": _maybe_contextual_followup(question, oa_answer.get("answer") or "", history) or _suggest_followup_tool(question, oa_answer.get("origin")),
+            "followup": (
+                _maybe_contextual_followup(question, oa_answer.get("answer") or "", history) or _suggest_followup_tool(question, oa_answer.get("origin"))
+            ) if settings.chat_followups_enabled else "",
             "offer_code": _offer_code_for(question, oa_answer.get("answer") or "", _detect_topic(question, oa_answer.get("answer") or "")),
             "attachments": _extract_urls(str(oa_answer.get("answer") or "")),
         }
@@ -182,7 +186,9 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "came_from": "schedule",
             "citation": "",
             "source_chunks": [],
-            "followup": _maybe_contextual_followup(question, tool_answer, history) or "¿Te muestro también tus clases de mañana?",
+            "followup": (
+                _maybe_contextual_followup(question, tool_answer, history) or "¿Te muestro también tus clases de mañana?"
+            ) if settings.chat_followups_enabled else "",
             "offer_code": _offer_code_for(question, tool_answer, _detect_topic(question, tool_answer)),
             "attachments": _extract_urls(tool_answer),
         }
@@ -196,7 +202,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
         "came_from": "llm",
         "citation": "",
         "source_chunks": [],
-        "followup": _maybe_contextual_followup(question, answer, history) or "",
+        "followup": (_maybe_contextual_followup(question, answer, history) or "") if settings.chat_followups_enabled else "",
         "offer_code": _offer_code_for(question, answer, _detect_topic(question, answer)),
         "attachments": _extract_urls(answer),
     }
@@ -432,6 +438,8 @@ def _last_was_followup(history: list[dict] | None) -> bool:
 
 
 def _maybe_contextual_followup(question: str, answer: str, history: list[dict] | None) -> str:
+    if not settings.chat_followups_enabled:
+        return ""
     # Evita repetir si el último turno ya terminó con pregunta
     if _last_was_followup(history):
         return ""
@@ -525,6 +533,19 @@ def _bias_asueto_query(q: str) -> str:
         # Añade términos para guiar la recuperación hacia asuetos/feriados
         return f"{q} (asueto, feriado, festivo)"
     return q
+
+
+_EXAM_HINT_RE = re.compile(r"\b(ordinari[oa]s?|extraordinari[oa]s?)\b", re.IGNORECASE)
+_EXAM_WORD_RE = re.compile(r"ex[aá]men", re.IGNORECASE)
+
+
+def _bias_exam_query(q: str) -> str:
+    """Si el usuario menciona 'ordinarios/extraordinarios' pero no 'exámenes', añade
+    términos relacionados para mejorar el recall del RAG hacia fechas de exámenes."""
+    s = q or ""
+    if _EXAM_HINT_RE.search(s) and not _EXAM_WORD_RE.search(s):
+        return f"{s} (exámenes ordinarios, fechas de exámenes, periodo de exámenes)"
+    return s
 
 
 # --- Continuidad: confirmaciones breves sí/no ---

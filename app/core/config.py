@@ -118,6 +118,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AURA_CHAT_HISTORY_N", "CHAT_HISTORY_N"),
     )
 
+    # Chat follow‑ups (preguntas al final)
+    chat_followups_enabled: bool = Field(
+        False,  # desactivado por defecto
+        validation_alias=AliasChoices("AURA_CHAT_FOLLOWUPS", "CHAT_FOLLOWUPS"),
+    )
+
     # Storage (R2)
     storage_provider: str | None = None  # e.g., "r2"
     r2_bucket: str | None = None
