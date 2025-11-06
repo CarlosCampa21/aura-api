@@ -104,3 +104,16 @@ def knn_search(vector: list[float], k: int = 5, index_name: str = "rag_embedding
             }
         )
     return out
+
+
+def list_texts_by_doc_id(doc_id: str, limit: int = 200) -> list[str]:
+    """Devuelve textos de chunks de un documento, en orden por `chunk_index`."""
+    db = get_db()
+    from bson import ObjectId
+
+    try:
+        oid = ObjectId(doc_id)
+    except Exception:
+        return []
+    cur = db[COLL].find({"doc_id": oid}, {"text": 1}).sort("chunk_index", 1).limit(int(limit))
+    return [str(d.get("text") or "") for d in cur]

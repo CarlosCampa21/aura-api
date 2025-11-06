@@ -6,9 +6,42 @@ from app.infrastructure.ai.tools.router import answer_with_tools
 import re
 from app.services.rag_search_service import answer_with_rag
 from app.core.time import now_text, now_time_text, now_date_text
+from typing import Optional, List, Dict, Any
 
 
-def ask(user_email: str, question: str) -> dict:
+_NAME_RE = re.compile(r"\b([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})\b")
+
+
+def _extract_person_hint(prev_text: Optional[str]) -> Optional[str]:
+    """Extrae un posible nombre propio (2–4 palabras capitalizadas) del texto previo."""
+    if not prev_text:
+        return None
+    m = None
+    for m in _NAME_RE.finditer(prev_text):
+        pass
+    if m:
+        return m.group(1)
+    return None
+
+
+def _extract_person_from_history(history: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    """Busca el último nombre propio en los últimos turnos de la conversación.
+
+    Revisa hasta ~6 mensajes previos (usuario y asistente) para detectar un
+    nombre de 2–4 palabras capitalizadas y lo usa como foco.
+    """
+    if not history:
+        return None
+    tail = list(history)[-6:]
+    for msg in reversed(tail):
+        txt = str(msg.get("content") or "")
+        hint = _extract_person_hint(txt)
+        if hint:
+            return hint
+    return None
+
+
+def ask(user_email: str, question: str, *, prev_text: Optional[str] = None, prev_messages: Optional[List[Dict[str, Any]]] = None, entity_focus: Optional[str] = None) -> dict:
     """Construye contexto y responde usando tool‑calling u LLM.
 
     Flujo:
@@ -42,9 +75,25 @@ def ask(user_email: str, question: str) -> dict:
             "attachments": _extract_urls(text_now),
         }
 
+    # Resolución ligera de referencia: si el usuario usa "su" o pronombres,
+    # aprovecha el último nombre detectado en el turno previo.
+    name_hint = None
+    if re.search(r"\b(su\s+(correo|email|nombre)|y\s+cu[aá]l\s+es\s+su)\b", qlow):
+        name_hint = entity_focus or _extract_person_hint(prev_text) or _extract_person_from_history(prev_messages)
+    else:
+        # Si la pregunta es muy corta y no menciona sujeto, intenta tomar foco del historial
+        if len(qlow.split()) <= 4 and not _extract_person_hint(question):
+            name_hint = entity_focus or _extract_person_from_history(prev_messages)
+        # Heurística: si menciona 'correo' o 'contacto' y no da nombre, hereda foco
+        if ("correo" in qlow or "contact" in qlow) and not name_hint:
+            name_hint = entity_focus or _extract_person_from_history(prev_messages)
+
     # 2) RAG primero: si hay evidencia útil, nos quedamos con esa respuesta
     try:
-        rag = answer_with_rag(question, k=5)
+        q_eff = question
+        if name_hint:
+            q_eff = f"{question} (Se refiere a: {name_hint})"
+        rag = answer_with_rag(q_eff, k=5, entity_hint=name_hint)
         if rag and rag.get("used_context") and rag.get("answer"):
             ans = str(rag.get("answer") or "")
             return {

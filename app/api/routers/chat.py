@@ -15,10 +15,14 @@ from app.api.schemas.chat import (
 from app.repositories.conversations_repo import (
     insert_conversation,
     list_conversations as repo_list_conversations,
+    get_conversation as repo_get_conversation,
+    update_conversation_metadata_fields as repo_update_conv_meta_fields,
+    delete_conversation as repo_delete_conversation,
 )
 from app.repositories.messages_repo import (
     insert_message,
     list_messages as repo_list_messages,
+    delete_by_conversation as repo_delete_msgs_by_conv,
 )
 from app.repositories.files_repo_r2 import upload_uploadfile_to_r2
 from app.repositories.auth_repo import get_user_by_id
@@ -177,6 +181,50 @@ def get_messages(
         raise HTTPException(status_code=500, detail=f"No se pudieron listar los mensajes: {e}")
 
 
+@router.delete(
+    "/conversations/{conversation_id}",
+    response_model=dict,
+    summary="Eliminar conversación",
+    description="Elimina una conversación y sus mensajes asociados.",
+)
+def delete_conversation(conversation_id: str, request: Request, x_session_id: Optional[str] = Header(default=None), session_id: Optional[str] = Query(default=None)):
+    """Elimina una conversación con validación básica de propiedad (usuario o sesión).
+
+    - Si la conversación tiene `user_id`, requiere Authorization y que coincida.
+    - Si es de invitado (sin `user_id`), requiere `X-Session-Id` o `session_id` que coincida.
+    """
+    try:
+        conv = repo_get_conversation(conversation_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+        # Validación de propiedad
+        owner_user_id = (conv.get("user_id") or "").strip()
+        conv_session_id = (conv.get("session_id") or "").strip()
+
+        if owner_user_id:
+            # Requiere auth y coincidencia
+            auth_header = request.headers.get("authorization")
+            current = get_current_user(authorization=auth_header)
+            if str(current.get("_id")) != str(owner_user_id):
+                raise HTTPException(status_code=403, detail="No autorizado para eliminar esta conversación")
+        else:
+            # Invitado: usa session id
+            sid = session_id or x_session_id
+            if not sid or str(sid) != str(conv_session_id):
+                raise HTTPException(status_code=403, detail="Falta o no coincide session_id para eliminar esta conversación")
+
+        # Elimina mensajes y conversación
+        deleted_msgs = repo_delete_msgs_by_conv(conversation_id)
+        deleted_conv = repo_delete_conversation(conversation_id)
+
+        return {"deleted": {"conversation": deleted_conv, "messages": deleted_msgs}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo eliminar la conversación: {e}")
+
+
 @router.post(
     "/ask",
     status_code=status.HTTP_201_CREATED,
@@ -249,7 +297,35 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
         # Contexto por email (si existe)
         email = str(user.get("email")) if (user and user.get("email")) else ""
 
-        ans = ask_service.ask(email or "", payload.content)
+        # Historial reciente para hints conversacionales (excluye el último mensaje que acabamos de insertar)
+        prev_text = None
+        prev_messages = []
+        try:
+            history = repo_list_messages(conversation_id=conversation_id)
+            if history:
+                prev_messages = history[:-1]
+                if prev_messages:
+                    prev_text = prev_messages[-1].get("content") or None
+        except Exception:
+            prev_text = None
+            prev_messages = []
+
+        # Obtiene entity_focus previo (memoria) de la conversación
+        entity_focus = None
+        try:
+            conv = repo_get_conversation(conversation_id)
+            if conv and conv.get("metadata"):
+                entity_focus = (conv["metadata"] or {}).get("entity_focus")
+        except Exception:
+            entity_focus = None
+
+        ans = ask_service.ask(
+            email or "",
+            payload.content,
+            prev_text=prev_text,
+            prev_messages=prev_messages,
+            entity_focus=entity_focus,
+        )
         answer_text = ans.get("respuesta") or "Sin respuesta"
         attachments_out = ans.get("attachments") or []
 
@@ -294,6 +370,24 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
             model=effective_model,
             session_id=session_id,
         ).model_dump()
+
+        # Actualiza memoria conversacional (resumen + foco de entidad)
+        try:
+            from app.services.memory_service import summarize_incremental, choose_entity_focus
+
+            prev_summary = None
+            conv = repo_get_conversation(conversation_id)
+            if conv:
+                meta = conv.get("metadata") or {}
+                prev_summary = meta.get("summary")
+            new_summary = summarize_incremental(prev_summary, payload.content, answer_text)
+            entity_focus = choose_entity_focus(prev_messages, payload.content, answer_text)
+            fields = {"summary": new_summary}
+            if entity_focus:
+                fields["entity_focus"] = entity_focus
+            repo_update_conv_meta_fields(conversation_id, fields)
+        except Exception:
+            pass
 
         # Guardado opcional como nota
         if payload.save_note:
@@ -387,7 +481,28 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
         except Exception:
             pass
 
-        ans = ask_service.ask(email or "", payload.content)
+        # Historial reciente (excluye este mensaje recién insertado)
+        prev_messages = []
+        prev_text = None
+        try:
+            history = repo_list_messages(conversation_id=conversation_id)
+            if history:
+                prev_messages = history[:-1]
+                if prev_messages:
+                    prev_text = prev_messages[-1].get("content") or None
+        except Exception:
+            pass
+
+        # Obtiene entity_focus previo
+        entity_focus = None
+        try:
+            conv = repo_get_conversation(conversation_id)
+            if conv and conv.get("metadata"):
+                entity_focus = (conv["metadata"] or {}).get("entity_focus")
+        except Exception:
+            pass
+
+        ans = ask_service.ask(email or "", payload.content, prev_text=prev_text, prev_messages=prev_messages, entity_focus=entity_focus)
         full_text = (ans.get("respuesta") or "Sin respuesta").strip()
         attachments_out = ans.get("attachments") or []
 
