@@ -151,6 +151,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 "citation": rag.get("citation") or "",
                 "source_chunks": rag.get("source_chunks") or [],
                 "followup": _maybe_contextual_followup(question, ans, history),
+                "offer_code": _offer_code_for(question, ans, _detect_topic(question, ans)),
                 "attachments": _extract_urls(ans),
             }
     except Exception:
@@ -167,6 +168,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "citation": "",
             "source_chunks": [],
             "followup": _maybe_contextual_followup(question, oa_answer.get("answer") or "", history) or _suggest_followup_tool(question, oa_answer.get("origin")),
+            "offer_code": _offer_code_for(question, oa_answer.get("answer") or "", _detect_topic(question, oa_answer.get("answer") or "")),
             "attachments": _extract_urls(str(oa_answer.get("answer") or "")),
         }
 
@@ -181,6 +183,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "citation": "",
             "source_chunks": [],
             "followup": _maybe_contextual_followup(question, tool_answer, history) or "¿Te muestro también tus clases de mañana?",
+            "offer_code": _offer_code_for(question, tool_answer, _detect_topic(question, tool_answer)),
             "attachments": _extract_urls(tool_answer),
         }
 
@@ -194,6 +197,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
         "citation": "",
         "source_chunks": [],
         "followup": _maybe_contextual_followup(question, answer, history) or "",
+        "offer_code": _offer_code_for(question, answer, _detect_topic(question, answer)),
         "attachments": _extract_urls(answer),
     }
 
@@ -252,7 +256,8 @@ _BYE_RE = re.compile(r"\b(ad[ií]os|nos vemos|hasta luego|hasta pronto|bye|me de
 _ACAD_HINTS = re.compile(
     r"(calendario|clases|horari|materia|inscripci|reinscripci|extraordinari|ordinari|"
     r"ex[aá]men|beca|titulaci|convocatoria|semestre|aula|sal[oó]n|docente|profesor|hoy|ma[nñ]ana|fecha|"
-    r"cu[aá]ndo|d[oó]nde|c[oó]mo|pdf|asueto|feriad|festiv|vacacion|vacacional|descanso)",
+    r"cu[aá]ndo|d[oó]nde|c[oó]mo|pdf|asueto|asuetos|feriad|feriados|festiv|festivos|vacacion|vacacional|descanso|"
+    r"no\s+hay\s+clases|sin\s+clases)",
     re.IGNORECASE,
 )
 
@@ -296,16 +301,17 @@ def _is_academic_intent(q: str | None) -> bool:
 
 
 SOCIAL_SYSTEM = (
-    "Eres AURA, asistente de la UABCS. Responde saludos y charla casual en español, "
-    "con 1 sola frase breve, cordial y natural. No ofrezcas documentos, ni PDF, "
-    "ni hables de calendario a menos que el usuario lo mencione explícitamente. "
-    "No uses listas, ni markdown, ni citas. Mantén variación natural."
+    "Eres AURA, asistente de la UABCS. Responde saludos y charla casual en español "
+    "de forma breve, cordial y profesional (1–2 oraciones). Evita conversación personal "
+    "(no preguntes planes del día, estados de ánimo, etc.). Redirige siempre hacia la "
+    "ayuda académica: termina con una pregunta breve de orientación como '¿En qué puedo "
+    "apoyarte con calendario, materias o trámites?'. No uses listas, ni markdown, ni citas."
 )
 
 
 def _social_llm_reply(prompt: str, history: list[dict] | None) -> str:
     try:
-        return (
+        out = (
             ask_llm(
                 prompt,
                 context="",
@@ -316,14 +322,24 @@ def _social_llm_reply(prompt: str, history: list[dict] | None) -> str:
             ).strip()
             or "Hola, ¿qué necesitas?"
         )
+        # Garantiza cierre orientado a ayuda académica y evita desvíos personales
+        help_re = re.compile(r"(en que puedo (ayudarte|apoyarte)|como puedo ayudarte)", re.IGNORECASE)
+        personal_re = re.compile(r"\b(plan(es)?|\btu d[ií]a\b|como te sientes|que tal tu d[ií]a)\b", re.IGNORECASE)
+        if not help_re.search(out):
+            # Añade una pregunta de ayuda si no está presente
+            out = (out.rstrip(" .!") + ". ¿En qué puedo apoyarte con calendario, materias o trámites?").strip()
+        if personal_re.search(out):
+            # Sustituye partes personales por orientación útil
+            out = "¿En qué puedo apoyarte con calendario, materias o trámites?"
+        return out
     except Exception:
         # Fallback a plantillas si falla la API
         pool = _SOCIAL_GREET
         try:
             import random as _rnd
-            return _rnd.choice(pool)
+            return (_rnd.choice(pool) + " ¿En qué puedo apoyarte con calendario, materias o trámites?").strip()
         except Exception:
-            return pool[0]
+            return (pool[0] + " ¿En qué puedo apoyarte con calendario, materias o trámites?").strip()
 
 
 def _suggest_followup_tool(question: str, origin: str | None) -> str:
@@ -439,6 +455,20 @@ def _maybe_contextual_followup(question: str, answer: str, history: list[dict] |
     return _rnd.choice(options)
 
 
+def _offer_code_for(question: str, answer: str, topic: str | None) -> str | None:
+    if not topic:
+        return None
+    if topic == "asueto":
+        return "offer_asuetos_next_month"
+    if topic == "fin":
+        return "offer_exam_dates"
+    if topic == "calendario":
+        return "offer_open_pdf"
+    if topic == "inicio":
+        return "offer_reinscripciones"
+    return None
+
+
 # --- Utilidades de preprocesamiento temporal y limpieza de citas ---
 
 _MONTHS_ES = {
@@ -522,6 +552,12 @@ def _last_offer(history: list[dict] | None) -> str | None:
     for m in reversed(history):
         if str(m.get("role")).lower() != "assistant":
             continue
+        # Preferir código explícito guardado en citations
+        cites = m.get("citations") or []
+        if isinstance(cites, list):
+            for c in cites:
+                if isinstance(c, dict) and c.get("offer"):
+                    return str(c.get("offer"))
         txt = str(m.get("content") or "").lower()
         if not txt:
             continue
@@ -531,4 +567,6 @@ def _last_offer(history: list[dict] | None) -> str | None:
             return "offer_open_pdf"
         if "recordar tus próximas clases" in txt or "recordarte tus próximas clases" in txt:
             return "offer_set_reminder"
+        if "asuetos del próximo mes" in txt or "asuetos del proximo mes" in txt:
+            return "offer_asuetos_next_month"
     return None

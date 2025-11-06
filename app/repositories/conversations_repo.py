@@ -63,3 +63,29 @@ def update_conversation_meta(conversation_id: str, updates: Dict[str, Any]) -> D
     db[COLLECTION].update_one({"_id": ObjectId(conversation_id)}, {"$set": set_ops})
     # No devolvemos el doc para evitar 2 lecturas; los callers pueden listar
     return set_ops
+
+
+def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
+    """Obtiene una conversación por id (retorna None si no existe)."""
+    db = get_db()
+    try:
+        oid = ObjectId(conversation_id)
+    except Exception:
+        return None
+    d = db[COLLECTION].find_one({"_id": oid})
+    if not d:
+        return None
+    d = dict(d)
+    d["id"] = str(d.pop("_id", ""))
+    return d
+
+
+def delete_conversation(conversation_id: str) -> int:
+    """Elimina una conversación por id. Devuelve 1 si se eliminó, 0 si no existía."""
+    db = get_db()
+    try:
+        oid = ObjectId(conversation_id)
+    except Exception:
+        return 0
+    res = db[COLLECTION].delete_one({"_id": oid})
+    return int(res.deleted_count)

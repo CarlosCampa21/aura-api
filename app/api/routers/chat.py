@@ -15,10 +15,14 @@ from app.api.schemas.chat import (
 from app.repositories.conversations_repo import (
     insert_conversation,
     list_conversations as repo_list_conversations,
+    update_conversation_meta as repo_update_conversation,
+    get_conversation as repo_get_conversation,
+    delete_conversation as repo_delete_conversation,
 )
 from app.repositories.messages_repo import (
     insert_message,
     list_messages as repo_list_messages,
+    delete_by_conversation as repo_delete_msgs_by_conv,
 )
 from app.repositories.files_repo_r2 import upload_uploadfile_to_r2
 from app.repositories.auth_repo import get_user_by_id
@@ -177,6 +181,43 @@ def get_messages(
         raise HTTPException(status_code=500, detail=f"No se pudieron listar los mensajes: {e}")
 
 
+@router.delete(
+    "/conversations/{conversation_id}",
+    response_model=dict,
+    summary="Eliminar conversación",
+    description="Elimina la conversación y sus mensajes (hard delete). Requiere pertenencia por user_id o session_id.",
+)
+def delete_conversation_route(conversation_id: str, request: Request, hard: bool = Query(True), user_id: Optional[str] = Query(default=None), x_session_id: Optional[str] = Header(default=None)):
+    try:
+        conv = repo_get_conversation(conversation_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+        # Autorización: por usuario autenticado o por sesión invitado
+        if user_id:
+            auth_header = request.headers.get("authorization")
+            current = get_current_user(authorization=auth_header)
+            if str(current.get("_id")) != str(user_id) or str(conv.get("user_id") or "") != str(user_id):
+                raise HTTPException(status_code=403, detail="No autorizado para eliminar esta conversación")
+        else:
+            # modo invitado: verifica session id
+            if str(conv.get("session_id") or "") != str(x_session_id or ""):
+                raise HTTPException(status_code=403, detail="No autorizado (sesión inválida)")
+
+        if not hard:
+            repo_update_conversation(conversation_id, {"status": "archived"})
+            return {"message": "ok", "archived": True}
+
+        # Hard delete con cascade messages
+        n_msgs = repo_delete_msgs_by_conv(conversation_id)
+        n_conv = repo_delete_conversation(conversation_id)
+        return {"message": "ok", "deleted_messages": n_msgs, "deleted_conversations": n_conv}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo eliminar la conversación: {e}")
+
+
 @router.post(
     "/ask",
     status_code=status.HTTP_201_CREATED,
@@ -267,6 +308,9 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
         if followup:
             answer_text += f"\n{followup}"
         attachments_out = ans.get("attachments") or []
+        citations_out = []
+        if ans.get("offer_code"):
+            citations_out.append({"offer": ans.get("offer_code")})
 
         # Mensaje del asistente
         asst_msg_id = insert_message({
@@ -275,6 +319,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
             "role": "assistant",
             "content": answer_text,
             "attachments": attachments_out,
+            "citations": citations_out,
             "session_id": session_id,
         })
 
@@ -299,7 +344,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
                 role="assistant",
                 content=answer_text,
                 attachments=attachments_out,
-                citations=[],
+                citations=citations_out,
                 model_snapshot=effective_model,
                 tokens_input=None,
                 tokens_output=None,
