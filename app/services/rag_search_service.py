@@ -48,7 +48,7 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
     # Permitir varios extractos por documento (configurable) para no perder señales.
     MAX_SNIPPETS_PER_DOC = max(1, int(getattr(settings, "rag_snippets_per_doc", 3)))
     snippets: List[str] = []
-    # Para salida enriquecida
+    # Para salida enriquecida (deshabilitado para UI: no citamos fuentes)
     source_chunks: List[Dict[str, str]] = []
     per_doc_count: Dict[str, int] = {}
     for h in hits:
@@ -102,30 +102,20 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
                 {"role": "system", "content": SYSTEM},
                 {"role": "user", "content": f"Contexto:\n{ctx}\n---\nPregunta: {question}"},
             ],
-            temperature=settings.chat_temperature,
+            temperature=getattr(settings, "rag_temperature", settings.chat_temperature),
             top_p=settings.chat_top_p,
             presence_penalty=settings.chat_presence_penalty,
             frequency_penalty=settings.chat_frequency_penalty,
         )
         out = (resp.choices[0].message.content or "").strip()
-        # Citation: usa el primer chunk como referencia
-        citation = ""
-        if source_chunks:
-            t = source_chunks[0].get("title") or ""
-            s = source_chunks[0].get("section") or ""
-            citation = f"{t} — {s}".strip(" —")
         followup = _suggest_followup(question)
-        return {"answer": out or "Sin respuesta.", "used_context": True, "came_from": "rag", "citation": citation, "source_chunks": source_chunks[:3], "followup": followup}
+        # Nota: no devolvemos citas ni chunks para evitar paréntesis en UI
+        return {"answer": out or "Sin respuesta.", "used_context": True, "came_from": "rag", "citation": "", "source_chunks": [], "followup": followup}
 
     # Fallback al pipeline genérico si no hay OpenAI
     text = ask_llm(question, ctx)
-    citation = ""
-    if source_chunks:
-        t = source_chunks[0].get("title") or ""
-        s = source_chunks[0].get("section") or ""
-        citation = f"{t} — {s}".strip(" —")
     followup = _suggest_followup(question)
-    return {"answer": text, "used_context": True, "came_from": "rag", "citation": citation, "source_chunks": source_chunks[:3], "followup": followup}
+    return {"answer": text, "used_context": True, "came_from": "rag", "citation": "", "source_chunks": [], "followup": followup}
 
 
 def _suggest_followup(question: str) -> str:

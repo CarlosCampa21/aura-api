@@ -261,12 +261,9 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
 
         ans = ask_service.ask(email or "", payload.content, history=history_msgs)
         base_text = ans.get("respuesta") or "Sin respuesta"
-        citation = (ans.get("citation") or "").strip()
         followup = (ans.get("followup") or "").strip()
-        # Construye texto visible para UI (agrega cita breve entre paréntesis y follow-up)
+        # Construye texto visible para UI (sin citas; opcionalmente agrega follow-up)
         answer_text = base_text
-        if citation:
-            answer_text += f"\n({citation})"
         if followup:
             answer_text += f"\n{followup}"
         attachments_out = ans.get("attachments") or []
@@ -302,9 +299,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
                 role="assistant",
                 content=answer_text,
                 attachments=attachments_out,
-                citations=([
-                    {"label": citation, "origin": ans.get("came_from"), "source_chunks": (ans.get("source_chunks") or [])[:3]}
-                ] if citation else []),
+                citations=[],
                 model_snapshot=effective_model,
                 tokens_input=None,
                 tokens_output=None,
@@ -417,11 +412,8 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
 
         ans = ask_service.ask(email or "", payload.content)
         base_text = (ans.get("respuesta") or "Sin respuesta").strip()
-        citation = (ans.get("citation") or "").strip()
         followup = (ans.get("followup") or "").strip()
         full_text = base_text
-        if citation:
-            full_text += f"\n({citation})"
         if followup:
             full_text += f"\n{followup}"
         attachments_out = ans.get("attachments") or []

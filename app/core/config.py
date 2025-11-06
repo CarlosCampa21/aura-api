@@ -96,6 +96,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AURA_CHAT_FREQUENCY", "CHAT_FREQUENCY"),
     )
 
+    # RAG sampling
+    rag_temperature: float = Field(
+        0.6,
+        validation_alias=AliasChoices("AURA_RAG_TEMPERATURE", "RAG_TEMPERATURE"),
+    )
+
     # RAG defaults
     rag_snippets_per_doc: int = Field(
         3,

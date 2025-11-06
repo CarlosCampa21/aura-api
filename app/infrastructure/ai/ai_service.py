@@ -7,17 +7,26 @@ from app.infrastructure.ai.ollama_client import ollama_ask
 
 SYSTEM_PROMPT = (
     "Eres AURA, asistente institucional de la Universidad Autónoma de Baja California Sur. "
-    "Habla en español con un tono claro, profesional y cordial. "
-    "Usa el historial para mantener continuidad en la conversación. "
-    "Responde con la información solicitada de forma precisa. "
-    "Si aplica, ofrece un apoyo adicional relacionado (por ejemplo: si preguntan una fecha, ofrecer ver el PDF oficial o información relacionada). "
-    "No inventes datos fuera del conocimiento entregado por el modelo o herramientas internas. "
-    "Si no tienes información suficiente, dilo amablemente y ofrece opciones para continuar."
+    "Habla en español, claro y cordial, y usa el historial para mantener continuidad. "
+    "No incluyas citas, referencias entre paréntesis ni nombres de fuentes al final. "
+    "Si en el turno previo ofreciste una acción (p. ej., '¿Quieres ver fechas de exámenes?') y el usuario responde afirmativamente (sí/ok/claro), "
+    "ejecuta la acción y entrega el contenido directamente (sin frases vacías). "
+    "No inventes datos; si falta información, dilo brevemente y sugiere una opción concreta para continuar."
 )
 
 
-
-def ask_llm(question: str, context: str = "", history: list[dict] | None = None) -> str:
+def ask_llm(
+    question: str,
+    context: str = "",
+    history: list[dict] | None = None,
+    *,
+    system: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    presence_penalty: float | None = None,
+    frequency_penalty: float | None = None,
+    max_tokens: int | None = None,
+) -> str:
     """
     Estrategia:
       1) OpenAI (modelo primario)
@@ -37,20 +46,26 @@ def ask_llm(question: str, context: str = "", history: list[dict] | None = None)
     except Exception:
         history_msgs = []
     oa = get_openai()
+    sys_prompt = system or SYSTEM_PROMPT
+    temp = settings.chat_temperature if temperature is None else float(temperature)
+    tp = settings.chat_top_p if top_p is None else float(top_p)
+    pres = settings.chat_presence_penalty if presence_penalty is None else float(presence_penalty)
+    freq = settings.chat_frequency_penalty if frequency_penalty is None else float(frequency_penalty)
 
     if oa:
         try:
             resp = oa.chat.completions.create(
                 model=settings.openai_model_primary,
                 messages=(
-                    [{"role": "system", "content": SYSTEM_PROMPT}] + history_msgs + [
+                    [{"role": "system", "content": sys_prompt}] + history_msgs + [
                         {"role": "user", "content": user_prompt}
                     ]
                 ),
-                temperature=settings.chat_temperature,
-                top_p=settings.chat_top_p,
-                presence_penalty=settings.chat_presence_penalty,
-                frequency_penalty=settings.chat_frequency_penalty,
+                temperature=temp,
+                top_p=tp,
+                presence_penalty=pres,
+                frequency_penalty=freq,
+                max_tokens=max_tokens,
             )
             out = (resp.choices[0].message.content or "").strip()
             return out or "Sin respuesta."
@@ -60,14 +75,15 @@ def ask_llm(question: str, context: str = "", history: list[dict] | None = None)
                 resp = oa.chat.completions.create(
                     model=settings.openai_model_fallback,
                     messages=(
-                        [{"role": "system", "content": SYSTEM_PROMPT}] + history_msgs + [
+                        [{"role": "system", "content": sys_prompt}] + history_msgs + [
                             {"role": "user", "content": user_prompt}
                         ]
                     ),
-                    temperature=settings.chat_temperature,
-                    top_p=settings.chat_top_p,
-                    presence_penalty=settings.chat_presence_penalty,
-                    frequency_penalty=settings.chat_frequency_penalty,
+                    temperature=temp,
+                    top_p=tp,
+                    presence_penalty=pres,
+                    frequency_penalty=freq,
+                    max_tokens=max_tokens,
                 )
                 out = (resp.choices[0].message.content or "").strip()
                 return out or "Sin respuesta."
@@ -80,9 +96,9 @@ def ask_llm(question: str, context: str = "", history: list[dict] | None = None)
     try:
         return (
             ollama_ask(
-                SYSTEM_PROMPT,
+                sys_prompt,
                 user_prompt,
-                temperature=0.2,
+                temperature=temp,
                 timeout=settings.ollama_timeout_seconds,
             )
             or "Sin respuesta."
