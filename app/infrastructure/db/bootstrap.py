@@ -443,6 +443,8 @@ def ensure_collections() -> None:
             "title": {"bsonType": "string"},
             "aliases": {"bsonType": "array", "items": {"bsonType": "string"}},
             "tags": {"bsonType": "array", "items": {"bsonType": "string"}},
+            # Tipo lógico del documento (e.g., 'rag')
+            "kind": {"bsonType": ["string", "null"]},
             "department": {"bsonType": ["string", "null"]},
             "program": {"bsonType": ["string", "null"]},
             "campus": {"bsonType": ["string", "null"]},
@@ -451,6 +453,35 @@ def ensure_collections() -> None:
             "url": {"bsonType": ["string", "null"]},
             "content_type": {"bsonType": ["string", "null"]},
             "size": {"bsonType": ["int", "null"]},
+            # Fuente PDF oficial (si aplica)
+            "source_pdf_url": {"bsonType": ["string", "null"]},
+            # Habilitación y versionado
+            "enabled": {"bsonType": ["bool", "null"]},
+            "version": {"bsonType": ["int", "null"], "minimum": 1},
+            "checksum": {"bsonType": ["string", "null"]},
+            # Alcance temporal
+            "scope": {
+                "bsonType": ["object", "null"],
+                "properties": {
+                    "from": {"bsonType": ["date", "string", "null"]},
+                    "to": {"bsonType": ["date", "string", "null"]},
+                },
+                "additionalProperties": True,
+            },
+            # Configuración de ingesta para RAG
+            "ingest": {
+                "bsonType": ["object", "null"],
+                "properties": {
+                    "embed_model": {"bsonType": ["string", "null"]},
+                    "chunk_size": {"bsonType": ["int", "null"], "minimum": 1},
+                    "chunk_overlap": {"bsonType": ["int", "null"], "minimum": 0},
+                    "last_ingested_at": {"bsonType": ["date", "string", "null"]},
+                    "status": {"bsonType": ["string", "null"], "enum": ["pending", "processing", "done", "error", None]},
+                },
+                "additionalProperties": True,
+            },
+            # Metadatos libres
+            "meta": {"bsonType": ["object", "null"]},
             # Auditoría
             "created_at": {"bsonType": "string", "minLength": 10},
             "updated_at": {"bsonType": "string", "minLength": 10},
@@ -462,8 +493,50 @@ def ensure_collections() -> None:
         "library_doc",
         [
             {"keys": [("status", 1)], "name": "ix_lib_status"},
+            # Filtros frecuentes
+            {"keys": [("enabled", 1), ("kind", 1), ("tags", 1)], "name": "ix_lib_enabled_kind_tags"},
+            {"keys": [("ingest.status", 1)], "name": "ix_lib_ingest_status"},
             # Búsqueda simple por campos comunes
             {"keys": [("title", "text"), ("aliases", "text"), ("tags", "text")], "name": "txt_lib_title_aliases_tags"},
+        ],
+    )
+
+    # Activos descargables (PDFs/imagenes) referenciados por library_doc
+    library_asset_validator = {
+        "bsonType": "object",
+        "required": [
+            "title",
+            "kind",
+            "mime_type",
+            "url",
+            "enabled",
+            "downloadable",
+            "version",
+            "created_at",
+            "updated_at",
+        ],
+        "properties": {
+            "title": {"bsonType": "string"},
+            "kind": {"bsonType": "string", "enum": ["asset"]},
+            "mime_type": {"bsonType": "string"},
+            "url": {"bsonType": "string"},
+            "doc_ref": {"bsonType": ["objectId", "null"]},
+            "enabled": {"bsonType": "bool"},
+            "downloadable": {"bsonType": "bool"},
+            "version": {"bsonType": "int", "minimum": 1},
+            "tags": {"bsonType": ["array", "null"], "items": {"bsonType": "string"}},
+            "meta": {"bsonType": ["object", "null"]},
+            "created_at": {"bsonType": "string", "minLength": 10},
+            "updated_at": {"bsonType": "string", "minLength": 10},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("library_asset", library_asset_validator)
+    _ensure_indexes(
+        "library_asset",
+        [
+            {"keys": [("enabled", 1), ("kind", 1), ("tags", 1)], "name": "ix_asset_enabled_kind_tags"},
+            {"keys": [("doc_ref", 1)], "name": "ix_asset_doc_ref"},
         ],
     )
 
@@ -504,6 +577,11 @@ def ensure_collections() -> None:
         [
             {"keys": [("doc_id", 1), ("chunk_index", 1)], "name": "ix_chunk_doc_idx"},
             {"keys": [("doc_id", 1)], "name": "ix_chunk_doc"},
+            # Índices adicionales para búsqueda híbrida y filtros
+            {"keys": [("text", "text")], "name": "txt_chunk_text"},
+            {"keys": [("meta.section", 1)], "name": "ix_chunk_meta_section"},
+            {"keys": [("meta.tags", 1)], "name": "ix_chunk_meta_tags"},
+            {"keys": [("meta.scope.from", 1), ("meta.scope.to", 1)], "name": "ix_chunk_meta_scope"},
         ],
     )
 
@@ -528,13 +606,28 @@ def _ensure_vector_search_index(coll_name: str, dims: int) -> None:
             "mappings": {
                 "dynamic": False,
                 "fields": {
+                    "text": {"type": "string"},
                     "embedding": {
                         "type": "knnVector",
                         "similarity": "cosine",
                         "dimensions": int(dims),
                     },
-                    # Campo de texto opcional si luego querremos búsqueda híbrida
-                    "text": {"type": "string"},
+                    "doc_id": {"type": "objectId"},
+                    "meta": {
+                        "type": "document",
+                        "fields": {
+                            "section": {"type": "string"},
+                            "tags": {"type": "string"},
+                            "lang": {"type": "string"},
+                            "scope": {
+                                "type": "document",
+                                "fields": {
+                                    "from": {"type": "date"},
+                                    "to": {"type": "date"}
+                                }
+                            }
+                        }
+                    }
                 },
             }
         }
@@ -549,3 +642,5 @@ def _ensure_vector_search_index(coll_name: str, dims: int) -> None:
     except Exception as e:  # pragma: no cover
         # Si el comando no existe (self-hosted o permisos insuficientes), continuamos.
         _log.info("Atlas createSearchIndexes no disponible: %s", e)
+
+    

@@ -59,9 +59,9 @@ Requisitos:
       Requeridos: R2_BUCKET, (R2_ENDPOINT o R2_ACCOUNT_ID), (R2_ACCESS_KEY o R2_ACCESS_KEY_ID), (R2_SECRET_KEY o R2_SECRET_ACCESS_KEY)
 
 Sincroniza:
-  data/rag   -> s3://$R2_BUCKET/rag
-  data/docs  -> s3://$R2_BUCKET/docs
-  data/media -> s3://$R2_BUCKET/media
+  data/rag   -> s3://$R2_BUCKET/library/rag
+  data/docs  -> s3://$R2_BUCKET/library/docs
+  data/media -> s3://$R2_BUCKET/library/media
 
 Opciones:
   --dry-run   Muestra los cambios sin aplicar
@@ -109,9 +109,9 @@ echo "Sincronizando hacia bucket: $R2_BUCKET (endpoint: $ENDPOINT)"
 mkdir -p "$ROOT_DIR/data/rag" "$ROOT_DIR/data/docs" "$ROOT_DIR/data/media"
 
 set -x
-aws s3 sync "$ROOT_DIR/data/rag"   "s3://$R2_BUCKET/rag"   --endpoint-url "$ENDPOINT" --delete $DRYRUN_FLAG
-aws s3 sync "$ROOT_DIR/data/docs"  "s3://$R2_BUCKET/docs"  --endpoint-url "$ENDPOINT" --delete $DRYRUN_FLAG
-aws s3 sync "$ROOT_DIR/data/media" "s3://$R2_BUCKET/media" --endpoint-url "$ENDPOINT" --delete $DRYRUN_FLAG
+aws s3 sync "$ROOT_DIR/data/rag"   "s3://$R2_BUCKET/library/rag"   --endpoint-url "$ENDPOINT" --delete $DRYRUN_FLAG
+aws s3 sync "$ROOT_DIR/data/docs"  "s3://$R2_BUCKET/library/docs"  --endpoint-url "$ENDPOINT" --delete $DRYRUN_FLAG
+aws s3 sync "$ROOT_DIR/data/media" "s3://$R2_BUCKET/library/media" --endpoint-url "$ENDPOINT" --delete $DRYRUN_FLAG
 set +x
 
 echo "Listo."

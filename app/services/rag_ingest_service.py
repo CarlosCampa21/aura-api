@@ -80,6 +80,11 @@ def ingest_document(doc_id: str) -> Dict[str, int | str]:
     d = get_document(doc_id)
     if not d or not d.get("file_url"):
         raise ValueError("Documento no encontrado o sin URL")
+    # Acepta sólo documentos de library_doc con kind=rag y habilitados
+    if str(d.get("kind") or "").lower() != "rag":
+        raise ValueError("Ingesta permitida sólo para library_doc.kind='rag'")
+    if d.get("enabled") is False:
+        raise ValueError("Documento RAG deshabilitado (enabled=false)")
 
     url = str(d["file_url"])
     content_type = str(d.get("content_type") or "")
@@ -110,4 +115,3 @@ def ingest_document(doc_id: str) -> Dict[str, int | str]:
     delete_by_doc_id(doc_id)
     n = bulk_insert_chunks(doc_id, items)
     return {"chunks": n, "embeddings": n, "status": "ok"}
-

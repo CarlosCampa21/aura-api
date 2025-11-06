@@ -21,6 +21,9 @@ def ingest_one(doc_id: str):
         return {"message": "ok", **res}
     except HTTPException:
         raise
+    except ValueError as e:
+        # Errores de validación (p.ej., documento no elegible para RAG) → 400
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo ingestar: {e}")
 
