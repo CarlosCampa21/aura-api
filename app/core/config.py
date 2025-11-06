@@ -4,6 +4,7 @@
 - Agrupa ajustes por área: App, CORS, Mongo, Auth/JWT, OpenAI/Ollama, Email, Chat.
 """
 from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field
 try:
     # pydantic-settings v2 style
     from pydantic_settings import SettingsConfigDict  # type: ignore
@@ -76,6 +77,40 @@ class Settings(BaseSettings):
     chat_auth_stream_rate_per_min: int = 20
     chat_prompt_max_chars_guest: int = 800
     chat_prompt_max_chars_auth: int = 4000
+
+    # Chat sampling (configurable vía .env)
+    chat_temperature: float = Field(
+        0.6,
+        validation_alias=AliasChoices("AURA_CHAT_TEMPERATURE", "CHAT_TEMPERATURE"),
+    )
+    chat_top_p: float = Field(
+        0.9,
+        validation_alias=AliasChoices("AURA_CHAT_TOP_P", "CHAT_TOP_P"),
+    )
+    chat_presence_penalty: float = Field(
+        0.1,
+        validation_alias=AliasChoices("AURA_CHAT_PRESENCE", "CHAT_PRESENCE"),
+    )
+    chat_frequency_penalty: float = Field(
+        0.0,
+        validation_alias=AliasChoices("AURA_CHAT_FREQUENCY", "CHAT_FREQUENCY"),
+    )
+
+    # RAG defaults
+    rag_snippets_per_doc: int = Field(
+        3,
+        validation_alias=AliasChoices("AURA_RAG_SNIPPETS_PER_DOC", "RAG_SNIPPETS_PER_DOC"),
+    )
+    rag_k_default: int = Field(
+        10,
+        validation_alias=AliasChoices("AURA_RAG_K", "RAG_K"),
+    )
+
+    # Chat history window (n últimos mensajes)
+    chat_history_n: int = Field(
+        8,
+        validation_alias=AliasChoices("AURA_CHAT_HISTORY_N", "CHAT_HISTORY_N"),
+    )
 
     # Storage (R2)
     storage_provider: str | None = None  # e.g., "r2"

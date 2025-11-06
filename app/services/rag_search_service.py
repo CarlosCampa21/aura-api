@@ -16,13 +16,15 @@ from app.infrastructure.ai.ai_service import ask_llm
 
 
 SYSTEM = (
-    "Eres AURA. Responde en español, cordial y conciso (1–2 oraciones). "
-    "No incluyas URLs ni referencias explícitas a 'fuentes'. "
-    "Usa exclusivamente la evidencia provista (título, etiquetas, sección y extractos). "
-    "Si la pregunta es de calendario/fechas y el contexto incluye 'Inicio de clases' o 'Inicio de labores', responde con la(s) fecha(s) correspondiente(s). "
-    "Si preguntan 'inicio del semestre', interpreta como fecha de inicio de clases; si hay variantes (escolarizados / no escolarizados), acláralas brevemente. "
-    "Si no hay evidencia suficiente, dilo con claridad."
+    "Usa únicamente la información del contexto para responder. "
+    "Responde con un tono cordial e institucional. "
+    "Da una respuesta clara y completa con la información encontrada. "
+    "Al final incluye entre paréntesis una cita breve indicando el origen del dato "
+    "(ejemplo: Calendario Escolar UABCS 2025 — Actividades 2025-II). "
+    "No inventes información fuera del contexto disponible. "
+    "Si no aparece la respuesta en el contexto, dilo con claridad y ofrece ayuda para buscarla."
 )
+
 
 
 def _build_context(snippets: List[str]) -> str:
@@ -34,16 +36,20 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
     """Realiza RAG: embedding de pregunta → knn → redacción sin fuentes."""
     vectors = embed_texts([question])
     qv = vectors[0] if vectors else []
-    hits = knn_search(qv, k=max(k, 5))
+    # Usa k por parámetro o default desde settings
+    eff_k = int(k or 0) or settings.rag_k_default
+    hits = knn_search(qv, k=max(eff_k, 5))
     if not hits:
         # Sin contexto, usar LLM estándar para respuesta general
         text = ask_llm(question, "")
         return {"answer": text, "used_context": False}
 
     # Enriquecer con metadatos (título/tags) del documento
-    # Permitir varios extractos por documento (máx 3) para evitar perder señales.
-    MAX_SNIPPETS_PER_DOC = 3
+    # Permitir varios extractos por documento (configurable) para no perder señales.
+    MAX_SNIPPETS_PER_DOC = max(1, int(getattr(settings, "rag_snippets_per_doc", 3)))
     snippets: List[str] = []
+    # Para salida enriquecida
+    source_chunks: List[Dict[str, str]] = []
     per_doc_count: Dict[str, int] = {}
     for h in hits:
         doc_id = str(h.get("doc_id"))
@@ -76,6 +82,15 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
         if section:
             prefix += f" | seccion: {section}"
         snippets.append(prefix + f"\nextracto: {snippet_text}")
+        # Guardar fuente enriquecida para UI (recorta extracto)
+        source_chunks.append({
+            "doc_id": doc_id,
+            "title": meta_title,
+            "section": section,
+            "chunk_index": str(h.get("chunk_index", 0)),
+            "score": f"{float(h.get('score', 0.0)):.4f}",
+            "text": (snippet_text[:280] + "…") if len(snippet_text) > 280 else snippet_text,
+        })
         per_doc_count[doc_id] = per_doc_count.get(doc_id, 0) + 1
     ctx = _build_context(snippets)
 
@@ -87,11 +102,38 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
                 {"role": "system", "content": SYSTEM},
                 {"role": "user", "content": f"Contexto:\n{ctx}\n---\nPregunta: {question}"},
             ],
-            temperature=0.2,
+            temperature=settings.chat_temperature,
+            top_p=settings.chat_top_p,
+            presence_penalty=settings.chat_presence_penalty,
+            frequency_penalty=settings.chat_frequency_penalty,
         )
         out = (resp.choices[0].message.content or "").strip()
-        return {"answer": out or "Sin respuesta.", "used_context": True}
+        # Citation: usa el primer chunk como referencia
+        citation = ""
+        if source_chunks:
+            t = source_chunks[0].get("title") or ""
+            s = source_chunks[0].get("section") or ""
+            citation = f"{t} — {s}".strip(" —")
+        followup = _suggest_followup(question)
+        return {"answer": out or "Sin respuesta.", "used_context": True, "came_from": "rag", "citation": citation, "source_chunks": source_chunks[:3], "followup": followup}
 
     # Fallback al pipeline genérico si no hay OpenAI
     text = ask_llm(question, ctx)
-    return {"answer": text, "used_context": True}
+    citation = ""
+    if source_chunks:
+        t = source_chunks[0].get("title") or ""
+        s = source_chunks[0].get("section") or ""
+        citation = f"{t} — {s}".strip(" —")
+    followup = _suggest_followup(question)
+    return {"answer": text, "used_context": True, "came_from": "rag", "citation": citation, "source_chunks": source_chunks[:3], "followup": followup}
+
+
+def _suggest_followup(question: str) -> str:
+    q = (question or "").lower()
+    if "semestre" in q or "inicio" in q:
+        return "¿Quieres que te muestre el PDF oficial del calendario?"
+    if "semana santa" in q:
+        return "¿Quieres ver el calendario completo?"
+    if "septiembre" in q or "asueto" in q or "clases" in q:
+        return "¿Deseas que también te comparta las fechas de exámenes ordinarios?"
+    return "¿Quieres que te comparta el documento oficial relacionado?"

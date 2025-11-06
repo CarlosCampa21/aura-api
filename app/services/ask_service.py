@@ -7,7 +7,7 @@ import re
 from app.services.rag_search_service import answer_with_rag
 
 
-def ask(user_email: str, question: str) -> dict:
+def ask(user_email: str, question: str, history: list[dict] | None = None) -> dict:
     """Construye contexto y responde usando tool‑calling u LLM.
 
     Flujo:
@@ -28,19 +28,27 @@ def ask(user_email: str, question: str) -> dict:
                 "pregunta": question,
                 "respuesta": ans,
                 "contexto_usado": True,
+                "came_from": rag.get("came_from") or "rag",
+                "citation": rag.get("citation") or "",
+                "source_chunks": rag.get("source_chunks") or [],
+                "followup": rag.get("followup") or "",
                 "attachments": _extract_urls(ans),
             }
     except Exception:
         pass
 
     # 2b) Si no hubo contexto del RAG, dejamos que el modelo decida tool/respuesta
-    oa_answer = answer_with_tools(user_email, question, ctx)
-    if oa_answer:
+    oa_answer = answer_with_tools(user_email, question, ctx, history=history)
+    if oa_answer and isinstance(oa_answer, dict) and (oa_answer.get("answer") or "").strip():
         return {
             "pregunta": question,
-            "respuesta": oa_answer,
+            "respuesta": oa_answer.get("answer") or "",
             "contexto_usado": True,
-            "attachments": _extract_urls(oa_answer),
+            "came_from": oa_answer.get("origin") or "tool",
+            "citation": "",
+            "source_chunks": [],
+            "followup": _suggest_followup_tool(question, oa_answer.get("origin")),
+            "attachments": _extract_urls(str(oa_answer.get("answer") or "")),
         }
 
     # 3) Fallback local: detector simple de horario
@@ -50,15 +58,23 @@ def ask(user_email: str, question: str) -> dict:
             "pregunta": question,
             "respuesta": tool_answer,
             "contexto_usado": True,
+            "came_from": "schedule",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "¿Quieres que te comparta también tus clases de mañana?",
             "attachments": _extract_urls(tool_answer),
         }
 
     # 4) Último recurso: pipeline LLM clásico (OpenAI→Ollama)
-    answer = ask_llm(question, ctx)
+    answer = ask_llm(question, ctx, history=history)
     return {
         "pregunta": question,
         "respuesta": answer,
         "contexto_usado": bool(ctx and ctx != "Sin datos académicos del alumno aún."),
+        "came_from": "llm",
+        "citation": "",
+        "source_chunks": [],
+        "followup": "¿Deseas que busque un documento oficial relacionado?",
         "attachments": _extract_urls(answer),
     }
 
@@ -90,3 +106,11 @@ def _extract_urls(text: str) -> list[str]:
             seen.add(u)
             out.append(u)
     return out
+
+
+def _suggest_followup_tool(question: str, origin: str | None) -> str:
+    if origin and origin.startswith("tool:get_schedule"):
+        return "¿Quieres que te recuerde tus próximas clases?"
+    if origin and origin.startswith("tool:get_document"):
+        return "¿Deseas que te comparta el enlace al documento en PDF?"
+    return "¿Deseas que amplíe con información relacionada?"

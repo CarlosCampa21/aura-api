@@ -236,6 +236,16 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
                 "mode": mode,
             })
 
+        # Historial (N últimos mensajes) antes de insertar el mensaje actual
+        history_msgs = []
+        try:
+            prev = repo_list_messages(conversation_id=conversation_id)
+            if prev:
+                n = max(0, int(settings.chat_history_n))
+                history_msgs = prev[-n:]
+        except Exception:
+            history_msgs = []
+
         # Mensaje del usuario
         user_msg_id = insert_message({
             "conversation_id": conversation_id,
@@ -249,8 +259,16 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
         # Contexto por email (si existe)
         email = str(user.get("email")) if (user and user.get("email")) else ""
 
-        ans = ask_service.ask(email or "", payload.content)
-        answer_text = ans.get("respuesta") or "Sin respuesta"
+        ans = ask_service.ask(email or "", payload.content, history=history_msgs)
+        base_text = ans.get("respuesta") or "Sin respuesta"
+        citation = (ans.get("citation") or "").strip()
+        followup = (ans.get("followup") or "").strip()
+        # Construye texto visible para UI (agrega cita breve entre paréntesis y follow-up)
+        answer_text = base_text
+        if citation:
+            answer_text += f"\n({citation})"
+        if followup:
+            answer_text += f"\n{followup}"
         attachments_out = ans.get("attachments") or []
 
         # Mensaje del asistente
@@ -284,7 +302,9 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
                 role="assistant",
                 content=answer_text,
                 attachments=attachments_out,
-                citations=[],
+                citations=([
+                    {"label": citation, "origin": ans.get("came_from"), "source_chunks": (ans.get("source_chunks") or [])[:3]}
+                ] if citation else []),
                 model_snapshot=effective_model,
                 tokens_input=None,
                 tokens_output=None,
@@ -313,7 +333,15 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
         dt_ms = int((monotonic() - t0) * 1000)
         # Log sencillo
         _log.info("/chat/ask mode=%s model=%s latency_ms=%s", mode, effective_model, dt_ms)
-        return {"message": "ok", **out, "user_message_id": user_msg_id, "assistant_message_id": asst_msg_id, "latency_ms": dt_ms}
+        enriched = {
+            "came_from": ans.get("came_from"),
+            "citation": ans.get("citation"),
+            "followup": ans.get("followup"),
+            "source_chunks": ans.get("source_chunks") or [],
+        }
+        base = {"message": "ok", **out, "user_message_id": user_msg_id, "assistant_message_id": asst_msg_id, "latency_ms": dt_ms}
+        base.update(enriched)
+        return base
     except HTTPException:
         raise
     except Exception as e:
@@ -388,7 +416,14 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
             pass
 
         ans = ask_service.ask(email or "", payload.content)
-        full_text = (ans.get("respuesta") or "Sin respuesta").strip()
+        base_text = (ans.get("respuesta") or "Sin respuesta").strip()
+        citation = (ans.get("citation") or "").strip()
+        followup = (ans.get("followup") or "").strip()
+        full_text = base_text
+        if citation:
+            full_text += f"\n({citation})"
+        if followup:
+            full_text += f"\n{followup}"
         attachments_out = ans.get("attachments") or []
 
         def _gen():

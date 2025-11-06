@@ -253,3 +253,74 @@ def get_schedule_answer(email: str, when: str, day_name: Optional[str] = None) -
         return f"No pude ubicar {name}."
 
     return "No entendí el momento solicitado del horario."
+
+
+def get_schedule_payload(email: str, when: str, day_name: Optional[str] = None) -> Dict[str, Any]:
+    """Versión estructurada para tool-calling.
+
+    Devuelve un payload con metadatos y entradas en lugar de texto plano.
+    """
+    when = (when or "").strip().lower()
+    profile = _get_user_profile(email)
+    now = _now_in_tz(profile.get("tz"))
+
+    def _entry_dict(e: Dict[str, Any], day: str, title: str) -> Dict[str, Any]:
+        return {
+            "day": day,
+            "timetable_title": title,
+            "start_time": e.get("start_time"),
+            "end_time": e.get("end_time"),
+            "course_name": e.get("course_name"),
+            "room_code": e.get("room_code"),
+            "instructor": e.get("instructor"),
+        }
+
+    if when == "now":
+        nxt = next_class(email, now)
+        if not nxt:
+            return {"type": "schedule", "when": "now", "entries": [], "message": "no_upcoming"}
+        return {
+            "type": "schedule",
+            "when": "now",
+            "entries": [
+                _entry_dict(nxt, nxt.get("day"), nxt.get("timetable_title", "")),
+            ],
+        }
+
+    if when == "today":
+        title, entries = classes_for_day(email, now)
+        return {
+            "type": "schedule",
+            "when": "today",
+            "entries": [_entry_dict(e, _weekday_code(now), title) for e in entries],
+        }
+
+    if when == "tomorrow":
+        d = now + timedelta(days=1)
+        title, entries = classes_for_day(email, d)
+        return {
+            "type": "schedule",
+            "when": "tomorrow",
+            "entries": [_entry_dict(e, _weekday_code(d), title) for e in entries],
+        }
+
+    if when == "day":
+        name = (day_name or "").strip().lower()
+        code = SPANISH_DAY_TO_CODE.get(name)
+        if not code:
+            return {"type": "schedule", "when": "day", "error": "invalid_day"}
+        # Busca el próximo día indicado a partir de hoy
+        ref = now
+        for i in range(7):
+            d = ref + timedelta(days=i)
+            if _weekday_code(d) == code:
+                title, entries = classes_for_day(email, d)
+                return {
+                    "type": "schedule",
+                    "when": "day",
+                    "day_name": name,
+                    "entries": [_entry_dict(e, code, title) for e in entries],
+                }
+        return {"type": "schedule", "when": "day", "day_name": name, "entries": []}
+
+    return {"type": "schedule", "when": when or "", "error": "unknown_when"}

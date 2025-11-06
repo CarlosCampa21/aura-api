@@ -12,7 +12,7 @@ from openai import BadRequestError
 
 from app.core.config import settings
 from app.infrastructure.ai.openai_client import get_openai
-from app.services.schedule_service import get_schedule_answer
+from app.services.schedule_service import get_schedule_answer, get_schedule_payload
 from app.services.library_service import search_document_answer
 from app.core.time import now_text
 
@@ -28,7 +28,7 @@ def _parse_args(s: Optional[str]) -> Dict[str, Any]:
         return {}
 
 
-def answer_with_tools(user_email: str, question: str, academic_context: str) -> Optional[str]:
+def answer_with_tools(user_email: str, question: str, academic_context: str, history: List[Dict[str, Any]] | None = None) -> Optional[Dict[str, Any]]:
     """
     Devuelve texto final si OpenAI decide usar tool-calling o responde directamente.
     Si no hay cliente o algo falla, retorna None para que el caller haga fallback.
@@ -38,12 +38,12 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
         return None
 
     sys_prompt = (
-        "Eres Aura, asistente académico de la UABCS. "
+        "Eres Aura, asistente académico de la UABCS (Estilo C: institucional, cordial y profesional). "
         "Decides si usar herramientas. "
         "Primero puedes consultar la hora actual con get_now para anclarte a la fecha y zona horaria del alumno. "
         "Para preguntas de horarios (qué clase me toca, qué materias tengo hoy, lunes, mañana, ahorita), usa get_schedule. "
         "Si falta especificar el día/momento, pide una aclaración breve y luego usa el tool correspondiente. "
-        "Responde en español, breve y accionable."
+        "Responde en español, claro y conciso (1–2 oraciones). Si no hay información suficiente, dilo."
     )
 
     tools = [
@@ -102,11 +102,24 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
         },
     ]
 
-    messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "system", "content": f"Contexto académico breve:\n{academic_context}"},
-        {"role": "user", "content": question},
-    ]
+    # Mapea historial simple (user/assistant) a mensajes previos
+    history_msgs: List[Dict[str, Any]] = []
+    try:
+        for m in (history or [])[-20:]:
+            r = str(m.get("role") or "").lower()
+            if r in {"user", "assistant"}:
+                c = str(m.get("content") or "").strip()
+                if c:
+                    history_msgs.append({"role": r, "content": c})
+    except Exception:
+        history_msgs = []
+
+    messages: List[Dict[str, Any]] = (
+        [{"role": "system", "content": sys_prompt},
+         {"role": "system", "content": f"Contexto académico breve:\n{academic_context}"}]
+        + history_msgs
+        + [{"role": "user", "content": question}]
+    )
 
     def call(model: str, msgs):
         return oa.chat.completions.create(
@@ -114,7 +127,10 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
             messages=msgs,
             tools=tools,
             tool_choice="auto",
-            temperature=0.2,
+            temperature=settings.chat_temperature,
+            top_p=settings.chat_top_p,
+            presence_penalty=settings.chat_presence_penalty,
+            frequency_penalty=settings.chat_frequency_penalty,
         )
 
     try:
@@ -127,7 +143,7 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
     msg = first.choices[0].message
     # Si el modelo decidió responder directamente
     if not getattr(msg, "tool_calls", None):
-        return (msg.content or "").strip() or None
+        return {"answer": (msg.content or "").strip() or "", "origin": "assistant"}
 
     # Ejecuta tool(s) solicitados. Para `get_schedule` podemos devolver
     # la respuesta directa. Si sólo se invoca `get_now`, hacemos una
@@ -135,6 +151,8 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
     tool_messages: List[Dict[str, Any]] = []
     called_schedule = False
     called_document = False
+    # Guardar payloads estructurados cuando aplique
+    schedule_payload: Dict[str, Any] | None = None
     for tc in msg.tool_calls or []:
         if tc.type != "function":
             continue
@@ -142,12 +160,14 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
             args = _parse_args(getattr(tc.function, "arguments", None))
             when = str(args.get("when") or "").lower()
             day_name = args.get("day_name")
-            tool_result = get_schedule_answer(user_email, when, day_name)
+            # Devolver payload estructurado
+            payload = get_schedule_payload(user_email, when, day_name)
+            schedule_payload = payload
             tool_messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
                 "name": "get_schedule",
-                "content": tool_result,
+                "content": __import__("json").dumps(payload),
             })
             called_schedule = True
         elif tc.function and tc.function.name == "get_now":
@@ -171,34 +191,20 @@ def answer_with_tools(user_email: str, question: str, academic_context: str) -> 
                 "content": tool_result,
             })
             called_document = True
-    # Si ya obtuvimos horario, respondemos con él directamente
-    if called_schedule and tool_messages:
-        return next((m["content"] for m in reversed(tool_messages) if m.get("name") == "get_schedule"), tool_messages[-1]["content"])
-
-    # Si obtuvimos un documento, respondemos con él directamente
-    if called_document and tool_messages:
-        return next((m["content"] for m in reversed(tool_messages) if m.get("name") == "get_document"), tool_messages[-1]["content"])
-
-    # Si sólo hubo get_now (o ningún tool), hacemos una segunda pasada
+    # Siempre hacer segunda pasada para que el modelo redacte la respuesta final
     if tool_messages:
         try:
             second = call(settings.openai_model_primary, messages + [{"role": "assistant", "content": msg.content or "", "tool_calls": msg.tool_calls}] + tool_messages)
         except BadRequestError:
             second = call(settings.openai_model_fallback, messages + [{"role": "assistant", "content": msg.content or "", "tool_calls": msg.tool_calls}] + tool_messages)
         except Exception:
-            # Regresa contenido del último tool como fallback
-            return tool_messages[-1]["content"]
+            # Regresa contenido del último tool como fallback (texto)
+            return {"answer": tool_messages[-1]["content"], "origin": "tool"}
 
         msg2 = second.choices[0].message
-        # Si en la segunda pasada llama get_schedule, ejecútalo y devuelve su contenido
-        if getattr(msg2, "tool_calls", None):
-            for tc in msg2.tool_calls or []:
-                if tc.type == "function" and tc.function and tc.function.name == "get_schedule":
-                    args = _parse_args(getattr(tc.function, "arguments", None))
-                    when = str(args.get("when") or "").lower()
-                    day_name = args.get("day_name")
-                    return get_schedule_answer(user_email, when, day_name)
-        return (msg2.content or "").strip() or tool_messages[-1]["content"]
+        out_text = (msg2.content or "").strip() or tool_messages[-1]["content"]
+        origin = "tool:get_schedule" if called_schedule else ("tool:get_document" if called_document else "tool")
+        return {"answer": out_text, "origin": origin, "schedule": schedule_payload}
 
     # Sin tools: respuesta directa
-    return (msg.content or "").strip() or None
+    return {"answer": (msg.content or "").strip() or "", "origin": "assistant"}

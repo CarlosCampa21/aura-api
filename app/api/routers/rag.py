@@ -5,6 +5,7 @@ Por ahora: endpoints para ingestar un documento o varios.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
+from app.core.config import settings
 
 from app.services.rag_ingest_service import ingest_document
 from app.repositories.library_repo import list_active_documents
@@ -45,7 +46,7 @@ def ingest_all(limit: int = Query(100, ge=1, le=1000)):
 
 
 @router.get("/search", summary="Búsqueda RAG con respuesta redactada (sin fuentes)")
-def rag_search(q: str = Query(..., min_length=2), k: int = Query(5, ge=1, le=10)):
+def rag_search(q: str = Query(..., min_length=2), k: int = Query(default=settings.rag_k_default, ge=1, le=10)):
     try:
         res = answer_with_rag(q, k=k)
         return {"message": "ok", **res}
