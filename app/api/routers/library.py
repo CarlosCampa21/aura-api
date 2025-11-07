@@ -6,7 +6,7 @@ Permite:
 """
 from __future__ import annotations
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import RedirectResponse
 
@@ -29,6 +29,21 @@ def _split_csv(s: Optional[str]) -> List[str]:
     return [p.strip() for p in s.split(",") if p.strip()]
 
 
+def _parse_json_obj(s: Optional[str]) -> Dict[str, Any]:
+    """Parsea un JSON de objeto enviado como string en form-data.
+
+    Si está vacío o inválido, devuelve {} sin lanzar excepción para no romper el upload.
+    """
+    if not s:
+        return {}
+    try:
+        import json
+        data = json.loads(s)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 async def _upload_r2_by_type(
     *,
     file: UploadFile,
@@ -41,6 +56,8 @@ async def _upload_r2_by_type(
     campus: Optional[str] = None,
     prefix: Optional[str] = None,
     source_is_pdf: Optional[bool] = False,
+    metadata: Optional[str] = None,
+    alt: Optional[str] = None,
 ):
     ctype = (file.content_type or "").lower()
 
@@ -68,6 +85,13 @@ async def _upload_r2_by_type(
         if not pf.endswith("/"):
             pf += "/"
         url = await upload_uploadfile_to_r2(file, prefix=pf)
+        meta: Dict[str, Any] = {"aliases": _split_csv(aliases) if aliases else []}
+        # Merge de metadata opcional + alt como campo de meta
+        meta_extra = _parse_json_obj(metadata)
+        if alt:
+            meta_extra.setdefault("alt", alt)
+        if meta_extra:
+            meta.update(meta_extra)
         asset = {
             "title": title or (file.filename or "Imagen"),
             "tags": _split_csv(tags),
@@ -76,7 +100,7 @@ async def _upload_r2_by_type(
             "enabled": True,
             "downloadable": True,
             "version": 1,
-            "meta": {"aliases": _split_csv(aliases) if aliases else []},
+            "meta": meta,
         }
         asset_id = insert_asset(asset)
         return {"message": "ok", "id": asset_id, "title": asset["title"], "url": url}
@@ -90,6 +114,17 @@ async def _upload_r2_by_type(
         if not pf.endswith("/"):
             pf += "/"
         url = await upload_uploadfile_to_r2(file, prefix=pf)
+        meta: Dict[str, Any] = {
+            "aliases": _split_csv(aliases) if aliases else [],
+            "department": department,
+            "program": program,
+            "campus": campus,
+        }
+        meta_extra = _parse_json_obj(metadata)
+        if alt:
+            meta_extra.setdefault("alt", alt)
+        if meta_extra:
+            meta.update(meta_extra)
         asset = {
             "title": title or (file.filename or "Documento"),
             "tags": _split_csv(tags),
@@ -98,12 +133,7 @@ async def _upload_r2_by_type(
             "enabled": True,
             "downloadable": True,
             "version": 1,
-            "meta": {
-                "aliases": _split_csv(aliases) if aliases else [],
-                "department": department,
-                "program": program,
-                "campus": campus,
-            },
+            "meta": meta,
         }
         asset_id = insert_asset(asset)
         return {"message": "ok", "id": asset_id, "title": asset["title"], "url": url}
@@ -166,6 +196,8 @@ async def upload_asset(
     department: Optional[str] = Form(default=None),
     program: Optional[str] = Form(default=None),
     campus: Optional[str] = Form(default=None),
+    metadata: Optional[str] = Form(default=None, description="JSON opcional con metadatos adicionales"),
+    alt: Optional[str] = Form(default=None, description="Texto alternativo/descripcion corta"),
     prefix: Optional[str] = Form(default=None, description="Prefijo en R2 (opcional). Se valida por tipo."),
     source_is_pdf: Optional[bool] = Form(default=False, description="Sólo para type=rag: copiar URL a source_pdf_url"),
 ):
@@ -181,6 +213,8 @@ async def upload_asset(
             campus=campus,
             prefix=prefix,
             source_is_pdf=source_is_pdf,
+            metadata=metadata,
+            alt=alt,
         )
     except HTTPException:
         raise

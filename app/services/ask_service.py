@@ -11,6 +11,7 @@ from app.services.library_service import (
     find_schedule_image_by_params,
     find_schedule_image_by_title,
     find_campus_map_image_url,
+    find_room_image,
 )
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -307,6 +308,47 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "citation": "",
             "source_chunks": [],
             "followup": "¿Quieres que lo busque con otro nombre?",
+            "attachments": [],
+        }
+
+    # C0-ter) Petición de foto del salón/aula → buscar en assets por tags
+    try:
+        room = _parse_room_request(question)
+    except Exception:
+        room = None
+    if room and room.get("name"):
+        hit = None
+        try:
+            hit = find_room_image(room.get("name"), building=room.get("building"), floor=room.get("floor"))
+        except Exception:
+            hit = None
+        if hit and hit.get("url"):
+            title = hit.get("title") or f"Salón {room.get('name').upper()}"
+            return {
+                "pregunta": question,
+                "respuesta": f"{title}",
+                "contexto_usado": True,
+                "came_from": "room-asset",
+                "citation": "",
+                "source_chunks": [],
+                "followup": "",
+                "attachments": [hit.get("url")],
+            }
+        # Si hay ambigüedad evidente, pide precisión
+        need = []
+        if not room.get("building"):
+            need.append("edificio (AD-46 o DSC-39)")
+        if not room.get("floor"):
+            need.append("planta (PB o PA)")
+        ask = " ¿Puedes indicar " + " y ".join(need) + "?" if need else " ¿Tienes otro nombre o etiqueta?"
+        return {
+            "pregunta": question,
+            "respuesta": "No logré ubicar la foto ahora mismo." + ask,
+            "contexto_usado": False,
+            "came_from": "room-asset-miss",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "",
             "attachments": [],
         }
 
@@ -859,6 +901,46 @@ _CAMPUS_MAP_REQ_RE = re.compile(r"\b(?:mapa|plano|croquis|imagen)\b.*\bcampus\b|
 def _is_campus_map_request(q: str | None) -> bool:
     s = (q or "").strip()
     return bool(s and _CAMPUS_MAP_REQ_RE.search(s))
+
+# --- Petición de foto de salón/aula ---
+_ROOM_REQ_RE = re.compile(
+    r"(\b(?:sal[oó]n|salon|aula|laboratorio|lab)\b|\b(?:foto|imagen)\b.*\b(?:servidores|server\s*room|centro\s*de\s*datos|redes)\b)",
+    re.IGNORECASE,
+)
+_BUILDING_RE = re.compile(r"\b(ad\s*-?\s*46|dsc\s*-?\s*39|dasc)\b", re.IGNORECASE)
+_FLOOR_RE = re.compile(r"\b(pb|pa|planta\s+alta|planta\s+baja|alta|baja)\b", re.IGNORECASE)
+
+
+def _parse_room_request(q: str | None) -> dict | None:
+    s = (q or "").strip()
+    if not s or not _ROOM_REQ_RE.search(s):
+        return None
+    # Intenta extraer el nombre del salón: token después de la palabra salón/aula
+    name = None
+    m = re.search(r"(?i)(?:sal[oó]n|salon|aula|laboratorio|lab)\s+(de\s+)?([A-Za-z0-9._-]{2,})", s)
+    if m:
+        name = (m.group(2) or "").strip(" .,-").strip()
+    else:
+        # Casos como "foto de los servidores"
+        m2 = re.search(r"(?i)(?:foto|imagen)\s+(?:de\s+)?(?:los\s+)?(servidores|server\s*room|centro\s*de\s*datos|redes)", s)
+        if m2:
+            name = m2.group(1)
+        else:
+            # Backup: último token alfabético
+            toks = re.findall(r"\b([A-Za-z]{2,})\b", s)
+            if toks:
+                name = toks[-1]
+    if not name:
+        return None
+    b = None
+    mb = _BUILDING_RE.search(s)
+    if mb:
+        b = mb.group(1)
+    f = None
+    mf = _FLOOR_RE.search(s)
+    if mf:
+        f = mf.group(1)
+    return {"name": name, "building": b, "floor": f}
 
 # --- Petición directa de enlace SGPP ---
 _SGPP_LINK_RE = re.compile(

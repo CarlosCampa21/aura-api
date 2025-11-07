@@ -4,7 +4,7 @@ Incluye utilidades para localizar assets (PDFs) en `library_asset`.
 """
 from __future__ import annotations
 
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 from app.repositories.library_repo import search_documents, get_document
 from app.repositories.library_asset_repo import search_assets
@@ -113,6 +113,99 @@ def find_campus_map_image_url() -> Optional[Dict[str, str]]:
     except Exception:
         return None
     return None
+
+
+def _normalize_building(s: str | None) -> str:
+    """Normaliza nombres de edificio a slugs cortos usados como tags.
+
+    Reglas actuales (DASC):
+    - AD-46 → "ad46"
+    - DSC-39 → "dsc39"
+    Acepta variantes con/ sin guion/espacios/ mayúsculas.
+    """
+    t = (s or "").strip().lower().replace(" ", "").replace("-", "")
+    if not t:
+        return ""
+    if t in {"ad46", "ad046", "ad-46".replace("-", ""), "ad 46".replace(" ", "")}:
+        return "ad46"
+    if t in {"dsc39", "dsc039", "dsc-39".replace("-", ""), "dsc 39".replace(" ", "")}:
+        return "dsc39"
+    # DASC genérico (sin edificio concreto)
+    if t in {"dasc"}:
+        return ""
+    return t
+
+
+def _normalize_floor(s: str | None) -> str:
+    """Normaliza planta a códigos cortos: pb/pa."""
+    t = (s or "").strip().lower()
+    if not t:
+        return ""
+    if t in {"pb", "planta baja", "baja", "p.b."}:
+        return "pb"
+    if t in {"pa", "planta alta", "alta", "p.a."}:
+        return "pa"
+    return t
+
+
+def find_room_image(name: str, building: str | None = None, floor: str | None = None, view: str | None = None) -> Optional[Dict[str, str]]:
+    """Localiza una imagen de un salón/aula por nombre y metadatos.
+
+    Busca en `library_asset` por título/tags; prioriza `image/*`.
+    Requiere que los assets estén etiquetados con tags como:
+      ["salon","aula","<nombre>","ad46"|"dsc39","pb"|"pa","puerta"|"interior"...]
+    """
+    try:
+        nm = (name or "").strip().lower()
+        if not nm:
+            return None
+        b = _normalize_building(building)
+        f = _normalize_floor(floor)
+        v = (view or "").strip().lower()
+
+        # Construye varias consultas robustas (en orden → la primera coincidencia gana)
+        toks_base: List[str] = ["salon", nm]
+        queries: List[str] = []
+        # Soporte de áreas no-aula (p. ej., sala de servidores)
+        infra_synonyms: List[str] = []
+        if nm in {"servidores", "server", "server-room", "server room", "cuarto-servidores", "cuarto de servidores", "sala de servidores", "centro de datos", "redes"}:
+            infra_synonyms = ["servidores", "server room", "cuarto-servidores", "sala de servidores", "centro de datos", "redes"]
+
+        def add_q(parts: List[str]):
+            q = " ".join([p for p in parts if p])
+            if q and q not in queries:
+                queries.append(q)
+
+        # Con combinaciones progresivas
+        add_q(toks_base + [b, f, v])
+        add_q(toks_base + [b, f])
+        add_q(toks_base + [b])
+        add_q(toks_base + [f])
+        add_q(["aula", nm, b, f])
+        add_q([nm, "salon", b, f])
+        add_q([nm, b])
+
+        # También prueba variantes del nombre en mayúsculas en caso de títulos exactos
+        add_q(["salon", nm.upper(), b, f])
+        add_q(["aula", nm.upper(), b, f])
+
+        # Para infraestructura: intenta búsquedas sin prefijos salón/aula
+        for syn in ([nm] + infra_synonyms):
+            add_q([syn, b, f, v])
+            add_q([syn, b, f])
+            add_q(["infraestructura", syn, b, f])
+            add_q(["redes", syn, b, f])
+
+        # Intento por cada consulta hasta topar una imagen
+        for q in queries:
+            items = search_assets(q, limit=10)
+            imgs = [i for i in items if (i.get("file_url") and str(i.get("mime_type", "")).lower().startswith("image/"))]
+            if imgs:
+                top = imgs[0]
+                return {"title": top.get("title") or f"Salón {name.upper()}", "url": top.get("file_url")}
+        return None
+    except Exception:
+        return None
 
 
 def find_schedule_image_for_user(user_email: str) -> Optional[Dict[str, str]]:
