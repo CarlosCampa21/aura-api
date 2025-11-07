@@ -13,6 +13,9 @@ from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.infrastructure.db.mongo import get_db
+from app.services.calendar_service import is_holiday
+import unicodedata
+import re
 
 
 SPANISH_DAY_TO_CODE = {
@@ -65,6 +68,15 @@ def _fmt_entry(e: Dict[str, Any]) -> str:
     return f"{e['start_time']}-{e['end_time']} {e['course_name']}{room}{teacher}"
 
 
+def _norm_text(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def _get_user_profile(email: str) -> Dict[str, Any]:
     db = get_db()
     u = db["user"].find_one({"email": email}, {"_id": 0, "profile": 1}) or {}
@@ -115,6 +127,92 @@ def classes_for_day(email: str, d: datetime) -> Tuple[str, List[Dict[str, Any]]]
     return (tt.get("title") or "", day_entries)
 
 
+def days_for_course(email: str, course_query: str) -> List[str]:
+    """Devuelve días (mon..sat) donde aparece una materia que coincide con `course_query`.
+
+    Coincidencia insensible a acentos/caso y tolerante (substring).
+    """
+    profile = _get_user_profile(email)
+    tt = _get_current_timetable(profile)
+    if not tt:
+        return []
+    entries = _list_entries(tt["id"]) 
+    qn = _norm_text(course_query)
+    found: List[str] = []
+    for e in entries:
+        name_n = _norm_text(e.get("course_name"))
+        if qn and qn in name_n:
+            if e.get("day") not in found:
+                found.append(e.get("day"))
+    return found
+
+
+def schedule_text_by_params(program: str, semester: int | str, shift: str | None, group: str | None = None) -> Optional[str]:
+    """Crea un resumen de horario por parámetros (sin requerir perfil).
+
+    Busca `timetable` vigente por department DASC + program/semester/(shift)/group y
+    devuelve un texto ordenado por día y hora.
+    """
+    db = get_db()
+    try:
+        q: Dict[str, Any] = {
+            "department_code": "DASC",
+            "program_code": str(program or "").upper(),
+            "semester": int(semester),
+            "is_current": True,
+        }
+        if shift:
+            q["shift"] = str(shift).upper()
+        if group:
+            q["group"] = str(group).upper()
+        tt = db["timetable"].find_one(q, {"_id": 1, "title": 1})
+        if not tt:
+            return None
+        items = list(db["timetable_entry"].find({"timetable_id": str(tt["_id"])}, {"_id": 0}).sort([("day", 1), ("start_time", 1)]))
+        if not items:
+            return None
+        # Orden agrupado por día con etiquetas en español
+        by_day: Dict[str, List[Dict[str, Any]]] = {}
+        for e in items:
+            by_day.setdefault(e.get("day"), []).append(e)
+        order = ["mon", "tue", "wed", "thu", "fri", "sat"]
+        parts: List[str] = [f"Horario vigente: {tt.get('title')}"]
+        for d in order:
+            if d in by_day:
+                label = CODE_TO_SPANISH_DAY.get(d, d).capitalize()
+                blocks = "; ".join(_fmt_entry(e) for e in by_day[d])
+                parts.append(f"{label}: {blocks}")
+        return "\n".join(parts)
+    except Exception:
+        return None
+
+
+def schedule_text_for_user(email: str) -> Optional[str]:
+    """Resumen textual del horario vigente del usuario (por perfil).
+
+    Devuelve None si no encuentra timetable vigente.
+    """
+    prof = _get_user_profile(email)
+    tt = _get_current_timetable(prof)
+    if not tt:
+        return None
+    db = get_db()
+    items = list(db["timetable_entry"].find({"timetable_id": str(tt["id"])}, {"_id": 0}).sort([("day", 1), ("start_time", 1)]))
+    if not items:
+        return None
+    by_day: Dict[str, List[Dict[str, Any]]] = {}
+    for e in items:
+        by_day.setdefault(e.get("day"), []).append(e)
+    order = ["mon", "tue", "wed", "thu", "fri", "sat"]
+    parts: List[str] = [f"Horario vigente: {tt.get('title')}"]
+    for d in order:
+        if d in by_day:
+            label = CODE_TO_SPANISH_DAY.get(d, d).capitalize()
+            blocks = "; ".join(_fmt_entry(e) for e in by_day[d])
+            parts.append(f"{label}: {blocks}")
+    return "\n".join(parts)
+
+
 def next_class(email: str, ref: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
     # Obtén tz del usuario
     profile = _get_user_profile(email)
@@ -144,6 +242,24 @@ def try_answer_schedule(email: str, question: str) -> Optional[str]:
     q = (question or "").strip().lower()
     if not q:
         return None
+
+    # Verifica perfil mínimo
+    prof = _get_user_profile(email) or {}
+    missing: list[str] = []
+    if not (prof.get("full_name")):
+        missing.append("nombre completo")
+    if not (prof.get("major")):
+        missing.append("carrera")
+    if not (prof.get("shift")):
+        missing.append("turno")
+    if not (prof.get("semester")):
+        missing.append("semestre")
+    if missing:
+        return (
+            "Para responder con tu horario necesito tu "
+            + ", ".join(missing)
+            + ". Puedes decírmelos y, si deseas, los guardo en tu perfil."
+        )
 
     intents = {
         "now": any(x in q for x in ["ahorita", "ahora", "en este momento"]),
@@ -185,15 +301,35 @@ def try_answer_schedule(email: str, question: str) -> Optional[str]:
         return f"Hoy: {items}."
 
     if intents["tomorrow"]:
-        d = now + timedelta(days=1)
-        _, entries = classes_for_day(email, d)
-        if not entries:
-            return "No tengo clases registradas para mañana en tu horario."
-        items = "; ".join(_fmt_entry(e) for e in entries)
-        return f"Mañana: {items}."
+        # Busca el próximo día con clases, evitando domingos y asuetos.
+        for i in range(1, 8):
+            d = now + timedelta(days=i)
+            if _weekday_code(d) == "sun":
+                continue
+            try:
+                if is_holiday(d):
+                    continue
+            except Exception:
+                # Si el calendario no está disponible, no bloqueamos la respuesta.
+                pass
+            _, entries = classes_for_day(email, d)
+            if entries:
+                items = "; ".join(_fmt_entry(e) for e in entries)
+                day_label = CODE_TO_SPANISH_DAY.get(_weekday_code(d), "").capitalize()
+                return f"Próximo día con clases ({day_label}): {items}."
+        return "No encuentro un próximo día con clases registradas en tu horario."
 
     # frases comunes
-    if any(x in q for x in ["que me toca", "qué me toca", "que clase me toca", "qué clase me toca", "materias tengo"]):
+    if any(x in q for x in [
+        "que me toca",
+        "qué me toca",
+        "que clase me toca",
+        "qué clase me toca",
+        "materias tengo",
+        "clases tengo",
+        "que clases tengo",
+        "qué clases tengo",
+    ]):
         # fallback a "hoy" si no especifican
         title, entries = classes_for_day(email, now)
         if not entries:
@@ -229,12 +365,28 @@ def get_schedule_answer(email: str, when: str, day_name: Optional[str] = None) -
         return f"Hoy ({day_label}): " + "; ".join(_fmt_entry(e) for e in entries)
 
     if when == "tomorrow":
-        d = now + timedelta(days=1)
-        day_label = CODE_TO_SPANISH_DAY.get(_weekday_code(d), "Mañana").capitalize()
-        _, entries = classes_for_day(email, d)
-        if not entries:
-            return f"No tengo clases registradas para mañana ({day_label})."
-        return f"Mañana ({day_label}): " + "; ".join(_fmt_entry(e) for e in entries)
+        # Busca el próximo día hábil con clases, evitando domingos y asuetos registrados
+        found_entries: List[Dict[str, Any]] = []
+        selected_day: Optional[datetime] = None
+        for i in range(1, 8):
+            d = now + timedelta(days=i)
+            if _weekday_code(d) == "sun":
+                continue
+            try:
+                if is_holiday(d):
+                    continue
+            except Exception:
+                # Si no hay calendario disponible, seguimos sin bloquear la respuesta
+                pass
+            _, entries = classes_for_day(email, d)
+            if entries:
+                found_entries = entries
+                selected_day = d
+                break
+        if not found_entries:
+            return "No encuentro un próximo día con clases registradas en tu horario."
+        day_label = CODE_TO_SPANISH_DAY.get(_weekday_code(selected_day or now), "").capitalize()
+        return f"Próximo día con clases ({day_label}): " + "; ".join(_fmt_entry(e) for e in found_entries)
 
     if when == "day":
         name = (day_name or "").strip().lower()
@@ -296,13 +448,33 @@ def get_schedule_payload(email: str, when: str, day_name: Optional[str] = None) 
         }
 
     if when == "tomorrow":
-        d = now + timedelta(days=1)
-        title, entries = classes_for_day(email, d)
-        return {
-            "type": "schedule",
-            "when": "tomorrow",
-            "entries": [_entry_dict(e, _weekday_code(d), title) for e in entries],
-        }
+        for i in range(1, 8):
+            d = now + timedelta(days=i)
+            if _weekday_code(d) == "sun":
+                continue
+            try:
+                if is_holiday(d):
+                    continue
+            except Exception:
+                pass
+            title, entries = classes_for_day(email, d)
+            if entries:
+                return {
+                    "type": "schedule",
+                    "when": "tomorrow",
+                    "selected_date": d.strftime("%Y-%m-%d"),
+                    "day_label_es": CODE_TO_SPANISH_DAY.get(_weekday_code(d), ""),
+                    "entries": [_entry_dict(e, _weekday_code(d), title) for e in entries],
+                }
+        return {"type": "schedule", "when": "tomorrow", "entries": []}
+
+def get_current_timetable_for_user(email: str) -> Optional[Dict[str, Any]]:
+    """Helper público para obtener el timetable vigente del usuario.
+
+    Devuelve el documento con campo `id` (str) si existe.
+    """
+    profile = _get_user_profile(email)
+    return _get_current_timetable(profile)
 
     if when == "day":
         name = (day_name or "").strip().lower()

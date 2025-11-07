@@ -430,6 +430,28 @@ def ensure_collections() -> None:
         ],
     )
 
+    # Calendario: asuetos (opcional). No crítico si falla.
+    calendar_holiday_validator = {
+        "bsonType": "object",
+        "required": ["date"],
+        "properties": {
+            "date": {"bsonType": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+            "reason": {"bsonType": ["string", "null"]},
+            "campus": {"bsonType": ["string", "null"]},
+            "created_at": {"bsonType": ["string", "null"]},
+            "updated_at": {"bsonType": ["string", "null"]},
+        },
+        "additionalProperties": True,
+    }
+    _collmod_or_create("calendar_holiday", calendar_holiday_validator)
+    _ensure_indexes(
+        "calendar_holiday",
+        [
+            {"keys": [("date", 1)], "name": "ix_holiday_date"},
+            {"keys": [("campus", 1), ("date", 1)], "name": "ix_holiday_campus_date"},
+        ],
+    )
+
     # Biblioteca de documentos institucionales (formularios, formatos, PDFs)
     library_doc_validator = {
         "bsonType": "object",

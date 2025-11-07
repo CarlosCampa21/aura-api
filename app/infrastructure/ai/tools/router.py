@@ -15,6 +15,8 @@ from app.infrastructure.ai.openai_client import get_openai
 from app.services.schedule_service import get_schedule_answer, get_schedule_payload
 from app.services.library_service import search_document_answer
 from app.core.time import now_text
+from app.services import profile_service
+from app.infrastructure.db.mongo import get_db
 
 
 def _parse_args(s: Optional[str]) -> Dict[str, Any]:
@@ -43,6 +45,8 @@ def answer_with_tools(user_email: str, question: str, academic_context: str, his
         "Primero puedes consultar la hora actual con get_now para anclarte a la fecha y zona horaria del alumno. "
         "Para preguntas de horarios (qué clase me toca, qué materias tengo hoy, lunes, mañana, ahorita), usa get_schedule. "
         "Si falta especificar el día/momento, pide una aclaración breve y luego usa el tool correspondiente. "
+        "Si el alumno proporciona o pide guardar datos de perfil (nombre, carrera, semestre, turno, grupo), usa update_profile SOLO si el usuario está autenticado y confirma explícitamente. "
+        "Si no está autenticado, explica que no puedes guardar pero podrás usar los datos en esta conversación. "
         "Responde en español, claro y conciso (1–2 oraciones). Si no hay información suficiente, dilo."
     )
 
@@ -100,6 +104,26 @@ def answer_with_tools(user_email: str, question: str, academic_context: str, his
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "update_profile",
+                "description": "Actualiza el perfil del alumno con los datos proporcionados (requiere usuario autenticado)",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "full_name": {"type": "string", "description": "Nombre completo"},
+                        "major": {"type": "string", "description": "Carrera/Programa (ej. IDS)"},
+                        "semester": {"type": "integer", "description": "Semestre (1-12)"},
+                        "shift": {"type": "string", "description": "Turno (TM/TV)"},
+                        "group": {"type": "string", "description": "Grupo (opcional)"},
+                        "tz": {"type": "string", "description": "Zona horaria IANA (opcional)"},
+                    },
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
+        },
     ]
 
     # Mapea historial simple (user/assistant) a mensajes previos
@@ -151,6 +175,8 @@ def answer_with_tools(user_email: str, question: str, academic_context: str, his
     tool_messages: List[Dict[str, Any]] = []
     called_schedule = False
     called_document = False
+    profile_updated = False
+    schedule_text_out: str | None = None
     # Guardar payloads estructurados cuando aplique
     schedule_payload: Dict[str, Any] | None = None
     for tc in msg.tool_calls or []:
@@ -161,7 +187,12 @@ def answer_with_tools(user_email: str, question: str, academic_context: str, his
             when = str(args.get("when") or "").lower()
             day_name = args.get("day_name")
             # Devolver payload estructurado
+            # Obtén payload estructurado y también una respuesta de texto determinista
             payload = get_schedule_payload(user_email, when, day_name)
+            try:
+                schedule_text_out = get_schedule_answer(user_email, when, day_name)
+            except Exception:
+                schedule_text_out = None
             schedule_payload = payload
             tool_messages.append({
                 "role": "tool",
@@ -191,12 +222,58 @@ def answer_with_tools(user_email: str, question: str, academic_context: str, his
                 "content": tool_result,
             })
             called_document = True
+        elif tc.function and tc.function.name == "update_profile":
+            args = _parse_args(getattr(tc.function, "arguments", None))
+            # Valida usuario por email; si no existe, devolver error amigable
+            db = get_db()
+            u = db["user"].find_one({"email": user_email.lower()})
+            if not u:
+                content = "No puedo guardar tu perfil sin un usuario autenticado."
+            else:
+                # Limpia campos vacíos y normaliza semestre si viene como str
+                payload: Dict[str, Any] = {}
+                for k in ("full_name", "major", "shift", "group", "tz"):
+                    v = args.get(k)
+                    if v is not None and str(v).strip() != "":
+                        payload[k] = str(v).strip()
+                if "semester" in args and args.get("semester") is not None:
+                    try:
+                        payload["semester"] = int(args.get("semester"))
+                    except Exception:
+                        pass
+                new_profile = profile_service.update_my_profile(str(u["_id"]), payload)
+                content = __import__("json").dumps({"message": "ok", "profile": new_profile})
+                profile_updated = True
+            tool_messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "name": "update_profile",
+                "content": content,
+            })
+    # Si el modelo solicitó get_schedule, respondemos de forma determinista sin segunda pasada
+    if called_schedule and schedule_text_out is not None:
+        origin = "tool:get_schedule"
+        out: Dict[str, Any] = {"answer": schedule_text_out, "origin": origin, "schedule": schedule_payload}
+        if profile_updated:
+            out["offer_code"] = "profile_updated"
+        return out
+
     # Siempre hacer segunda pasada para que el modelo redacte la respuesta final
     if tool_messages:
         try:
-            second = call(settings.openai_model_primary, messages + [{"role": "assistant", "content": msg.content or "", "tool_calls": msg.tool_calls}] + tool_messages)
+            second = call(
+                settings.openai_model_primary,
+                messages
+                + [{"role": "assistant", "content": msg.content or "", "tool_calls": msg.tool_calls}]
+                + tool_messages,
+            )
         except BadRequestError:
-            second = call(settings.openai_model_fallback, messages + [{"role": "assistant", "content": msg.content or "", "tool_calls": msg.tool_calls}] + tool_messages)
+            second = call(
+                settings.openai_model_fallback,
+                messages
+                + [{"role": "assistant", "content": msg.content or "", "tool_calls": msg.tool_calls}]
+                + tool_messages,
+            )
         except Exception:
             # Regresa contenido del último tool como fallback (texto)
             return {"answer": tool_messages[-1]["content"], "origin": "tool"}
@@ -204,7 +281,10 @@ def answer_with_tools(user_email: str, question: str, academic_context: str, his
         msg2 = second.choices[0].message
         out_text = (msg2.content or "").strip() or tool_messages[-1]["content"]
         origin = "tool:get_schedule" if called_schedule else ("tool:get_document" if called_document else "tool")
-        return {"answer": out_text, "origin": origin, "schedule": schedule_payload}
+        out: Dict[str, Any] = {"answer": out_text, "origin": origin, "schedule": schedule_payload}
+        if profile_updated:
+            out["offer_code"] = "profile_updated"
+        return out
 
     # Sin tools: respuesta directa
     return {"answer": (msg.content or "").strip() or "", "origin": "assistant"}

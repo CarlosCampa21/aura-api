@@ -6,10 +6,49 @@ from app.services.schedule_service import try_answer_schedule
 from app.infrastructure.ai.tools.router import answer_with_tools
 import re
 from app.services.rag_search_service import answer_with_rag
+from app.services.library_service import find_schedule_image_for_user, find_schedule_image_by_params, find_schedule_image_by_title
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.core.time import get_user_tz
 from app.core.config import settings
+from app.services.schedule_service import days_for_course, CODE_TO_SPANISH_DAY
+from app.infrastructure.db.mongo import get_db
+
+# Catálogo cacheado de códigos de programa para validar 'carrera'
+_PROGRAM_CODES_CACHE: set[str] | None = None
+
+
+def _known_program_codes() -> set[str]:
+    global _PROGRAM_CODES_CACHE
+    if _PROGRAM_CODES_CACHE is not None:
+        return _PROGRAM_CODES_CACHE
+    try:
+        db = get_db()
+        codes = set()
+        for r in db["program"].find({}, {"code": 1}):
+            c = str(r.get("code") or "").upper().strip()
+            if c:
+                codes.add(c)
+        _PROGRAM_CODES_CACHE = codes or {"IDS"}
+    except Exception:
+        _PROGRAM_CODES_CACHE = {"IDS"}
+    return _PROGRAM_CODES_CACHE
+
+
+def _extract_program_code(text: str) -> str | None:
+    s = (text or "").strip()
+    codes = _known_program_codes()
+    # Etiquetas explícitas: carrera/programa/major: CODIGO
+    m = re.search(r"(?i)(?:carrera|programa|major)\s*[:=]?\s*([A-Za-z]{2,8})\b", s)
+    if m:
+        cand = m.group(1).upper()
+        return cand if cand in codes else None
+    # Tokens alfabéticos validados contra catálogos
+    for tok in re.findall(r"\b([A-Za-z]{2,8})\b", s):
+        cand = tok.upper()
+        if cand in codes:
+            return cand
+    return None
 
 
 def ask(user_email: str, question: str, history: list[dict] | None = None) -> dict:
@@ -21,6 +60,37 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     3) Fallback local de horario
     4) Fallback LLM (OpenAI→Ollama)
     """
+    # Helpers locales para captura de perfil paso a paso
+    def _get_profile(email: str) -> dict:
+        try:
+            db = get_db()
+            u = db["user"].find_one({"email": email.lower()}, {"profile": 1}) or {}
+            return (u or {}).get("profile") or {}
+        except Exception:
+            return {}
+
+    def _missing_ordered(p: dict) -> list[str]:
+        order = ["full_name", "major", "shift", "semester"]
+        missing = []
+        for k in order:
+            v = p.get(k)
+            if v is None or (isinstance(v, str) and not v.strip()):
+                missing.append(k)
+        return missing
+
+    def _pretty(k: str) -> str:
+        return {"full_name": "nombre completo", "major": "carrera", "shift": "turno", "semester": "semestre"}.get(k, k)
+
+    def _prompt_for(k: str) -> str:
+        if k == "full_name":
+            return "¿Cuál es tu nombre completo?"
+        if k == "major":
+            return "¿Cuál es tu carrera? (ej. IDS)"
+        if k == "shift":
+            return "¿Cuál es tu turno? (TM matutino o TV vespertino)"
+        if k == "semester":
+            return "¿Qué semestre cursas? (número 1–12 o en palabras)"
+        return f"¿Puedes compartir tu {k}?"
     # 0) Confirmación sí/no de una oferta del turno anterior
     if _is_yes_or_no(question):
         offer = _last_offer(history)
@@ -138,6 +208,66 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     if _is_calendar_request(question):
         return _answer_calendar_request(question, history)
 
+    # C1.52) Captura progresiva ANTES de desambiguar nombres: evita que
+    # frases como "noveno" caigan en el detector de nombres.
+    try:
+        if user_email:
+            last_assistant = ""
+            if history:
+                for m in reversed(history):
+                    if str(m.get("role")).lower() == "assistant":
+                        last_assistant = (m.get("content") or "").lower()
+                        break
+            if any(pat in last_assistant for pat in [
+                "completar tu perfil",
+                "guardar en tu perfil",
+                "completar el perfil",
+                "aún me falta",
+                "aun me falta",
+                "me falta:",
+            ]):
+                s = (question or "").strip()
+                import re
+                payload: dict = {}
+                m = re.search(r"(?i)(?:me llamo|mi nombre es|nombre\s*:)\s+(.+)$", s)
+                if m:
+                    payload["full_name"] = m.group(1).strip().strip('.')
+                major_code = _extract_program_code(s)
+                if major_code:
+                    payload["major"] = major_code
+                if re.search(r"(?i)\b(matutino|tm|mañana|manana)\b", s):
+                    payload["shift"] = "TM"
+                elif re.search(r"(?i)\b(vespertino|tv|tarde)\b", s):
+                    payload["shift"] = "TV"
+                m = re.search(r"(?i)semestre\s*[:=]?\s*(\d{1,2})\b", s)
+                words_to_num = {
+                    "primero":1,"segundo":2,"tercero":3,"cuarto":4,"quinto":5,"sexto":6,
+                    "septimo":7,"séptimo":7,"octavo":8,"noveno":9,"décimo":10,"decimo":10,
+                    "once":11,"onceavo":11,"undécimo":11,"doce":12,"doceavo":12,"duodécimo":12,
+                }
+                if m:
+                    payload["semester"] = int(m.group(1))
+                else:
+                    for w, n in words_to_num.items():
+                        if re.search(rf"(?i)\b{w}\b", s):
+                            payload["semester"] = n; break
+                if payload:
+                    try:
+                        from app.services import profile_service
+                        from app.infrastructure.db.mongo import get_db as _get_db
+                        db = _get_db()
+                        u = db["user"].find_one({"email": user_email.lower()})
+                        if u:
+                            newp = profile_service.update_my_profile(str(u["_id"]), payload)
+                            missing = _missing_ordered(newp)
+                            if missing:
+                                return {"pregunta": question, "respuesta": "Gracias. Guardé lo que me diste. " + _prompt_for(missing[0]), "contexto_usado": False, "came_from": "profile-partial", "citation": "", "source_chunks": [], "followup": "", "attachments": [], "offer_code": None}
+                            return {"pregunta": question, "respuesta": "Gracias. Tu perfil ha quedado completo.", "contexto_usado": False, "came_from": "profile-complete", "citation": "", "source_chunks": [], "followup": "", "attachments": [], "offer_code": "profile_updated"}
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
     # C1.5) Desambiguación: nombre suelto sin apellidos → pedir más contexto
     disamb = _maybe_disambiguate_person(question)
     if disamb:
@@ -151,6 +281,303 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "followup": "",
             "attachments": [],
         }
+
+    # C1.55) Captura progresiva de perfil (usuario autenticado): si el turno previo pidió completar
+    # el perfil, interpreta datos parciales (nombre, carrera, turno, semestre), guarda avances
+    # y pide lo que falte.
+    try:
+        if user_email:
+            last_assistant = ""
+            if history:
+                for m in reversed(history):
+                    if str(m.get("role")).lower() == "assistant":
+                        last_assistant = (m.get("content") or "").lower()
+                        break
+            if any(pat in last_assistant for pat in [
+                "completar tu perfil",
+                "guardar en tu perfil",
+                "completar el perfil",
+                "aún me falta",
+                "aun me falta",
+                "me falta:",
+            ]):
+                s = (question or "").strip()
+                # Detecta campos
+                import re
+                payload: dict = {}
+                # Nombre
+                m = re.search(r"(?i)(?:me llamo|mi nombre es|nombre\s*:)\s+(.+)$", s)
+                if m:
+                    payload["full_name"] = m.group(1).strip().strip('.')
+                # Carrera: valida contra catálogos para evitar capturar 'mi'
+                major_code = _extract_program_code(s)
+                if major_code:
+                    payload["major"] = major_code
+                # Turno
+                if re.search(r"(?i)\b(matutino|tm|mañana|manana)\b", s):
+                    payload["shift"] = "TM"
+                elif re.search(r"(?i)\b(vespertino|tv|tarde)\b", s):
+                    payload["shift"] = "TV"
+                # Semestre
+                m = re.search(r"(?i)semestre\s*[:=]?\s*(\d{1,2})\b", s)
+                words_to_num = {
+                    "primero":1,"segundo":2,"tercero":3,"cuarto":4,"quinto":5,"sexto":6,
+                    "septimo":7,"séptimo":7,"octavo":8,"noveno":9,"décimo":10,"decimo":10,
+                    "once":11,"onceavo":11,"undécimo":11,"doce":12,"doceavo":12,"duodécimo":12,
+                }
+                if m:
+                    payload["semester"] = int(m.group(1))
+                else:
+                    for w, n in words_to_num.items():
+                        if re.search(rf"(?i)\b{w}\b", s):
+                            payload["semester"] = n; break
+                # Si hay algo que guardar
+                if payload:
+                    try:
+                        from app.infrastructure.db.mongo import get_db
+                        from app.services import profile_service
+                        db = get_db()
+                        u = db["user"].find_one({"email": user_email.lower()})
+                        if u:
+                            newp = profile_service.update_my_profile(str(u["_id"]), payload)
+                            # Calcula faltantes
+                            missing = []
+                            for k in ("full_name","major","shift","semester"):
+                                if not newp.get(k):
+                                    missing.append(k)
+                            if missing:
+                                pretty = {
+                                    "full_name":"nombre completo",
+                                    "major":"carrera",
+                                    "shift":"turno",
+                                    "semester":"semestre",
+                                }
+                                need = ", ".join(pretty.get(k,k) for k in missing)
+                                return {
+                                    "pregunta": question,
+                                    "respuesta": f"Gracias. Guardé lo que me diste. Aún me falta: {need}. ¿Me compartes esos datos?",
+                                    "contexto_usado": False,
+                                    "came_from": "profile-partial",
+                                    "citation": "",
+                                    "source_chunks": [],
+                                    "followup": "",
+                                    "attachments": [],
+                                    "offer_code": None,
+                                }
+                            # Completo
+                            return {
+                                "pregunta": question,
+                                "respuesta": "Gracias. Tu perfil ha quedado completo.",
+                                "contexto_usado": False,
+                                "came_from": "profile-complete",
+                                "citation": "",
+                                "source_chunks": [],
+                                "followup": "",
+                                "attachments": [],
+                                "offer_code": "profile_updated",
+                            }
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    # C1.6) Si el turno previo pidió carrera/semestre/turno y ahora envían esos datos
+    # intenta mostrar imagen del horario con esos parámetros (sin requerir guardar perfil).
+    try:
+        last_assistant = ""
+        if history:
+            for m in reversed(history):
+                if str(m.get("role")).lower() == "assistant":
+                    last_assistant = (m.get("content") or "").lower()
+                    break
+        asked_schedule_details = ("carrera, semestre y turno" in last_assistant) or ("¿de qué carrera" in last_assistant)
+        if asked_schedule_details:
+            s = (question or "").lower()
+            # Programa (código) validado contra catálogos (evita capturar 'mi')
+            import re
+            prog = _extract_program_code(s)
+            # Semestre: número o en palabras
+            words_to_num = {
+                "primero":1,"segundo":2,"tercero":3,"cuarto":4,"quinto":5,"sexto":6,
+                "septimo":7,"séptimo":7,"octavo":8,"noveno":9,"décimo":10,"decimo":10,
+                "once":11,"onceavo":11,"undécimo":11,"doce":12,"doceavo":12,"duodécimo":12,
+            }
+            sem = None
+            m = re.search(r"\b(\d{1,2})\b", s)
+            if m:
+                sem = int(m.group(1))
+            else:
+                for w, n in words_to_num.items():
+                    if w in s:
+                        sem = n; break
+            # Turno
+            shift = None
+            if any(w in s for w in ["matutino", "tm", "mañana", "manana"]):
+                shift = "TM"
+            elif any(w in s for w in ["vespertino", "tv", "tarde"]):
+                shift = "TV"
+            if prog and sem and shift:
+                # 1) Intenta imagen
+                hit = find_schedule_image_by_params(prog, sem, shift)
+                if hit and hit.get("url"):
+                    return {
+                        "pregunta": question,
+                        "respuesta": "Aquí tienes el horario.",
+                        "contexto_usado": True,
+                        "came_from": "asset-schedule-params",
+                        "citation": "",
+                        "source_chunks": [],
+                        "followup": "",
+                        "attachments": [hit.get("url")],
+                    }
+                # 2) Fallback: construir horario en texto por parámetros (sin perfil)
+                from app.services.schedule_service import schedule_text_by_params
+                txt = schedule_text_by_params(prog, sem, shift)
+                if txt:
+                    return {
+                        "pregunta": question,
+                        "respuesta": txt,
+                        "contexto_usado": True,
+                        "came_from": "schedule-by-params",
+                        "citation": "",
+                        "source_chunks": [],
+                        "followup": "",
+                        "attachments": [],
+                    }
+    except Exception:
+        pass
+
+    # C1.7) "¿qué días ... (me dan|tengo) <materia>?" → respuesta determinista desde timetable
+    try:
+        qlow = (question or "").lower()
+        # patrón simple: captura lo que sigue a 'que dias' hasta el final
+        m = re.search(r"qu[eé]\s*d[ií]as.*?(me\s+dan|tengo)\s+(.+)$", qlow)
+        if m:
+            course = m.group(3).strip().rstrip('? .!')
+            if course:
+                days = days_for_course(user_email, course)
+                if days:
+                    names = [CODE_TO_SPANISH_DAY.get(d, d).capitalize() for d in days]
+                    return {
+                        "pregunta": question,
+                        "respuesta": f"{', '.join(names)}.",
+                        "contexto_usado": True,
+                        "came_from": "schedule-course-days",
+                        "citation": "",
+                        "source_chunks": [],
+                        "followup": "",
+                        "attachments": [],
+                    }
+                else:
+                    return {
+                        "pregunta": question,
+                        "respuesta": "No encuentro esa materia en tu horario vigente.",
+                        "contexto_usado": True,
+                        "came_from": "schedule-course-days",
+                        "citation": "",
+                        "source_chunks": [],
+                        "followup": "",
+                        "attachments": [],
+                    }
+    except Exception:
+        pass
+
+    # C2) "dame mi horario" → intenta adjuntar imagen del horario vigente
+    try:
+        qlow = (question or "").lower()
+        # Caso: el usuario dijo solo "dame la imagen" y previamente mostramos el horario en texto
+        if any(w in qlow for w in ["dame la imagen", "la imagen", "imagen", "foto"]) and "horario" not in qlow:
+            last_text = ""
+            try:
+                if history:
+                    for m in reversed(history):
+                        if str(m.get("role")).lower() == "assistant":
+                            last_text = (m.get("content") or "")
+                            break
+            except Exception:
+                last_text = ""
+            if "Horario vigente:" in last_text:
+                import re
+                m = re.search(r"Horario vigente:\s*(.+)", last_text)
+                title = m.group(1).strip() if m else ""
+                hit = find_schedule_image_by_title(title)
+                if hit and hit.get("url"):
+                    return {"pregunta": question, "respuesta": "Aquí tienes tu horario.", "contexto_usado": True, "came_from": "asset-schedule-title", "citation": "", "source_chunks": [], "followup": "", "attachments": [hit.get("url")]}
+                # Apología + reutiliza el mismo texto mostrado
+                apology = "Disculpa, no encontré la imagen ahora mismo. Te dejo el horario en texto:"
+                if last_text:
+                    return {"pregunta": question, "respuesta": apology + "\n" + last_text, "contexto_usado": True, "came_from": "schedule-text-repeat", "citation": "", "source_chunks": [], "followup": "", "attachments": []}
+        
+        if ("horario" in qlow) and any(w in qlow for w in ["mi ", "muestra", "ver", "dame", "foto", "imagen"]):
+            hit = find_schedule_image_for_user(user_email)
+            if hit and hit.get("url"):
+                return {
+                    "pregunta": question,
+                    "respuesta": "Aquí tienes tu horario.",
+                    "contexto_usado": True,
+                    "came_from": "asset-schedule",
+                    "citation": "",
+                    "source_chunks": [],
+                    "followup": "",
+                    "attachments": [hit.get("url")],
+                }
+            # Fallback: si está logueado, construye horario en texto; si no, pide datos mínimos
+            from app.services.schedule_service import schedule_text_for_user
+            txt = schedule_text_for_user(user_email) if user_email else None
+            if txt:
+                return {
+                    "pregunta": question,
+                    "respuesta": txt,
+                    "contexto_usado": True,
+                    "came_from": "schedule-text",
+                    "citation": "",
+                    "source_chunks": [],
+                    "followup": "",
+                    "attachments": [],
+                }
+            # Mensaje de solicitud: distinguir entre usuario autenticado e invitado
+            if user_email:
+                try:
+                    p = _get_profile(user_email)
+                    missing_keys = _missing_ordered(p)
+                    if missing_keys:
+                        text = ("Para completar tu perfil y mostrar tu horario: " + _prompt_for(missing_keys[0]))
+                    else:
+                        text = "No logré ubicar tu horario vigente. ¿Confirmas carrera/semestre/turno?"
+                except Exception:
+                    text = "Para completar tu perfil y mostrar tu horario: ¿Cuál es tu carrera? (ej. IDS)"
+            else:
+                text = "¿De qué carrera, semestre y turno es el horario que quieres ver?"
+            return {
+                "pregunta": question,
+                "respuesta": text,
+                "contexto_usado": False,
+                "came_from": "asset-schedule-missing",
+                "citation": "",
+                "source_chunks": [],
+                "followup": "",
+                "attachments": [],
+            }
+    except Exception:
+        pass
+
+    # C1.9) Atajo determinista para preguntas de horario (evita hallucinations del LLM)
+    try:
+        quick = try_answer_schedule(user_email, question)
+        if quick:
+            return {
+                "pregunta": question,
+                "respuesta": _strip_irrelevant_contact(_clean_text(quick), question),
+                "contexto_usado": True,
+                "came_from": "schedule-fastpath",
+                "citation": "",
+                "source_chunks": [],
+                "followup": ("¿Puedo ayudarte con otra cosa?") if settings.chat_followups_enabled else "",
+                "offer_code": _offer_code_for(question, quick, _detect_topic(question, quick)),
+                "attachments": _extract_urls(quick),
+            }
+    except Exception:
+        pass
 
     # C2) Construye contexto breve
     ctx = build_academic_context(user_email)
@@ -196,7 +623,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "citation": "",
             "source_chunks": [],
             "followup": ("¿Puedo ayudarte con otra cosa?") if settings.chat_followups_enabled else "",
-            "offer_code": _offer_code_for(question, oa_answer.get("answer") or "", _detect_topic(question, oa_answer.get("answer") or "")),
+            "offer_code": oa_answer.get("offer_code") or _offer_code_for(question, oa_answer.get("answer") or "", _detect_topic(question, oa_answer.get("answer") or "")),
             "attachments": _extract_urls(str(oa_answer.get("answer") or "")),
         }
 
@@ -398,61 +825,64 @@ def _is_calendar_request(q: str | None) -> bool:
 
 
 def _answer_calendar_request(question: str, history: list[dict] | None = None) -> dict:
-    url = None
+    """Responde minimalista con vista previa si está disponible.
+
+    Preferir imagen (miniatura) si existe; si no, adjuntar PDF. Mensaje breve:
+    "Aquí está el calendario".
+    """
+    img_url = None
+    pdf_url = None
     title = "Calendario escolar"
     try:
-        from app.services.library_service import find_calendar_pdf_url
+        from app.services.library_service import find_calendar_image_url, find_calendar_pdf_url
 
-        hit = find_calendar_pdf_url()
-        if hit and hit.get("url"):
-            url = str(hit.get("url"))
-            title = str(hit.get("title") or title)
+        img = find_calendar_image_url()
+        if img and img.get("url"):
+            img_url = str(img.get("url"))
+            title = str(img.get("title") or title)
+        pdf = find_calendar_pdf_url()
+        if pdf and pdf.get("url"):
+            pdf_url = str(pdf.get("url"))
+            if not title:
+                title = str(pdf.get("title") or title)
     except Exception:
-        url = None
+        pass
 
-    wants_pdf = bool(_WANTS_PDF_RE.search(question or ""))
-
-    # Si el usuario pidió explícitamente el PDF/documento, responde minimalista
-    if wants_pdf and url:
-        text = f"Aquí está el documento solicitado: {url}"
+    # Si hay imagen, muéstrala como vista previa; opcionalmente el PDF se podrá descargar desde el mismo asset
+    if img_url:
         return {
             "pregunta": question,
-            "respuesta": text,
+            "respuesta": f"Aquí está el {title}.",
             "contexto_usado": True,
             "came_from": "calendar",
             "citation": "",
             "source_chunks": [],
             "followup": "",
-            "attachments": [url],
+            "attachments": [img_url] + ([pdf_url] if pdf_url else []),
         }
 
-    # Si no lo pidió explícitamente, ofrece PDF + resumen breve
-    try:
-        q = (
-            "Resumen breve del calendario escolar 2025: inicio y fin de clases de ambos semestres, "
-            "fechas de exámenes ordinarios y extraordinarios. En 3–5 líneas, claro y sin citas."
-        )
-        rag = answer_with_rag(q, k=30)
-        summary = _clean_text(str(rag.get("answer") or ""))
-    except Exception:
-        summary = ""
+    if pdf_url:
+        return {
+            "pregunta": question,
+            "respuesta": f"Aquí está el {title}.",
+            "contexto_usado": True,
+            "came_from": "calendar",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "",
+            "attachments": [pdf_url],
+        }
 
-    parts = []
-    if url:
-        parts.append(f"{title} (PDF): {url}")
-    if summary:
-        parts.append(summary)
-    text = "\n\n".join(parts) if parts else "Aquí tienes el calendario escolar."
-
+    # Fallback sin URL disponible
     return {
         "pregunta": question,
-        "respuesta": text,
-        "contexto_usado": True,
-        "came_from": "calendar",
+        "respuesta": "No encontré el calendario en este momento.",
+        "contexto_usado": False,
+        "came_from": "calendar-miss",
         "citation": "",
         "source_chunks": [],
-        "followup": "",  # sin orquestación/preguntas finales
-        "attachments": [url] if url else [],
+        "followup": "¿Quieres que lo busque con otro nombre?",
+        "attachments": [],
     }
 
 
