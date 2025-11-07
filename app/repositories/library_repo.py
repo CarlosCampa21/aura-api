@@ -105,15 +105,30 @@ def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
 
 
 def list_active_documents(limit: int = 100, skip: int = 0) -> list[Dict[str, Any]]:
-    """Lista documentos activos con campos mínimos para ingesta."""
+    """Lista documentos activos elegibles para ingesta RAG.
+
+    Solo devuelve documentos de library_doc con kind == "rag" y (enabled == True o sin campo),
+    con URL presente.
+    """
     db = get_db()
     projection = {
         "title": 1,
         "url": 1,
         "content_type": 1,
         "status": 1,
+        "kind": 1,
+        "enabled": 1,
     }
-    cur = db[COLL].find({"status": "active", "url": {"$ne": None}}, projection).skip(int(skip)).limit(int(limit))
+    filtro = {
+        "status": "active",
+        "url": {"$ne": None},
+        "kind": "rag",
+        "$or": [
+            {"enabled": True},
+            {"enabled": {"$exists": False}},
+        ],
+    }
+    cur = db[COLL].find(filtro, projection).skip(int(skip)).limit(int(limit))
     out: list[Dict[str, Any]] = []
     for d in cur:
         out.append({

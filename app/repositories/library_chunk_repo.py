@@ -26,6 +26,20 @@ def delete_by_doc_id(doc_id: str) -> int:
     return int(res.deleted_count)
 
 
+def delete_by_title(title: str, *, regex: bool = False) -> int:
+    """Elimina chunks cuyo `meta.title` coincide con el título dado.
+
+    - Si `regex` es False (default), usa coincidencia exacta del campo.
+    - Si `regex` es True, usa expresión regular insensible a mayúsculas.
+    """
+    db = get_db()
+    if not title:
+        return 0
+    filtro = {"meta.title": title} if not regex else {"meta.title": {"$regex": title, "$options": "i"}}
+    res = db[COLL].delete_many(filtro)
+    return int(res.deleted_count)
+
+
 def bulk_insert_chunks(doc_id: str, chunks: Iterable[Dict[str, Any]]) -> int:
     """Inserta en bloque chunks ya procesados para un documento.
 
@@ -87,6 +101,7 @@ def knn_search(vector: list[float], k: int = 5, index_name: str = "rag_embedding
                 "doc_id": 1,
                 "chunk_index": 1,
                 "text": 1,
+                "meta": 1,
                 "score": {"$meta": "searchScore"},
             }
         },
@@ -100,6 +115,7 @@ def knn_search(vector: list[float], k: int = 5, index_name: str = "rag_embedding
                 "doc_id": str(r.get("doc_id")),
                 "chunk_index": int(r.get("chunk_index", 0)),
                 "text": r.get("text") or "",
+                "meta": r.get("meta") or {},
                 "score": float(r.get("score", 0.0)),
             }
         )

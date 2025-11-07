@@ -52,15 +52,6 @@ def list_conversations(user_id: Optional[str] = None, status: Optional[str] = No
         out.append(d)
     return out
 
-def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
-    """Obtiene una conversación por id (tal cual en DB)."""
-    db = get_db()
-    try:
-        d = db[COLLECTION].find_one({"_id": ObjectId(conversation_id)})
-        return d
-    except Exception:
-        return None
-
 
 def update_conversation_meta(conversation_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
     """Actualiza metadatos (title, status, settings, metadata, last_message_at)."""
@@ -74,22 +65,27 @@ def update_conversation_meta(conversation_id: str, updates: Dict[str, Any]) -> D
     return set_ops
 
 
-def update_conversation_metadata_fields(conversation_id: str, fields: Dict[str, Any]) -> None:
-    """Actualiza claves dentro de `metadata` sin sobreescribir todo el objeto.
-
-    Ejemplo: {"summary": "...", "entity_focus": "..."}
-    """
+def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
+    """Obtiene una conversación por id (retorna None si no existe)."""
     db = get_db()
-    set_ops: Dict[str, Any] = {f"metadata.{k}": v for k, v in fields.items()}
-    set_ops["updated_at"] = _now_iso()
-    db[COLLECTION].update_one({"_id": ObjectId(conversation_id)}, {"$set": set_ops})
+    try:
+        oid = ObjectId(conversation_id)
+    except Exception:
+        return None
+    d = db[COLLECTION].find_one({"_id": oid})
+    if not d:
+        return None
+    d = dict(d)
+    d["id"] = str(d.pop("_id", ""))
+    return d
 
 
 def delete_conversation(conversation_id: str) -> int:
-    """Elimina una conversación por id.
-
-    Devuelve 1 si se eliminó, 0 si no existía.
-    """
+    """Elimina una conversación por id. Devuelve 1 si se eliminó, 0 si no existía."""
     db = get_db()
-    res = db[COLLECTION].delete_one({"_id": ObjectId(conversation_id)})
+    try:
+        oid = ObjectId(conversation_id)
+    except Exception:
+        return 0
+    res = db[COLLECTION].delete_one({"_id": oid})
     return int(res.deleted_count)

@@ -15,8 +15,8 @@ from app.api.schemas.chat import (
 from app.repositories.conversations_repo import (
     insert_conversation,
     list_conversations as repo_list_conversations,
+    update_conversation_meta as repo_update_conversation,
     get_conversation as repo_get_conversation,
-    update_conversation_metadata_fields as repo_update_conv_meta_fields,
     delete_conversation as repo_delete_conversation,
 )
 from app.repositories.messages_repo import (
@@ -185,40 +185,33 @@ def get_messages(
     "/conversations/{conversation_id}",
     response_model=dict,
     summary="Eliminar conversación",
-    description="Elimina una conversación y sus mensajes asociados.",
+    description="Elimina la conversación y sus mensajes (hard delete). Requiere pertenencia por user_id o session_id.",
 )
-def delete_conversation(conversation_id: str, request: Request, x_session_id: Optional[str] = Header(default=None), session_id: Optional[str] = Query(default=None)):
-    """Elimina una conversación con validación básica de propiedad (usuario o sesión).
-
-    - Si la conversación tiene `user_id`, requiere Authorization y que coincida.
-    - Si es de invitado (sin `user_id`), requiere `X-Session-Id` o `session_id` que coincida.
-    """
+def delete_conversation_route(conversation_id: str, request: Request, hard: bool = Query(True), user_id: Optional[str] = Query(default=None), x_session_id: Optional[str] = Header(default=None)):
     try:
         conv = repo_get_conversation(conversation_id)
         if not conv:
             raise HTTPException(status_code=404, detail="Conversación no encontrada")
 
-        # Validación de propiedad
-        owner_user_id = (conv.get("user_id") or "").strip()
-        conv_session_id = (conv.get("session_id") or "").strip()
-
-        if owner_user_id:
-            # Requiere auth y coincidencia
+        # Autorización: por usuario autenticado o por sesión invitado
+        if user_id:
             auth_header = request.headers.get("authorization")
             current = get_current_user(authorization=auth_header)
-            if str(current.get("_id")) != str(owner_user_id):
+            if str(current.get("_id")) != str(user_id) or str(conv.get("user_id") or "") != str(user_id):
                 raise HTTPException(status_code=403, detail="No autorizado para eliminar esta conversación")
         else:
-            # Invitado: usa session id
-            sid = session_id or x_session_id
-            if not sid or str(sid) != str(conv_session_id):
-                raise HTTPException(status_code=403, detail="Falta o no coincide session_id para eliminar esta conversación")
+            # modo invitado: verifica session id
+            if str(conv.get("session_id") or "") != str(x_session_id or ""):
+                raise HTTPException(status_code=403, detail="No autorizado (sesión inválida)")
 
-        # Elimina mensajes y conversación
-        deleted_msgs = repo_delete_msgs_by_conv(conversation_id)
-        deleted_conv = repo_delete_conversation(conversation_id)
+        if not hard:
+            repo_update_conversation(conversation_id, {"status": "archived"})
+            return {"message": "ok", "archived": True}
 
-        return {"deleted": {"conversation": deleted_conv, "messages": deleted_msgs}}
+        # Hard delete con cascade messages
+        n_msgs = repo_delete_msgs_by_conv(conversation_id)
+        n_conv = repo_delete_conversation(conversation_id)
+        return {"message": "ok", "deleted_messages": n_msgs, "deleted_conversations": n_conv}
     except HTTPException:
         raise
     except Exception as e:
@@ -284,6 +277,16 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
                 "mode": mode,
             })
 
+        # Historial (N últimos mensajes) antes de insertar el mensaje actual
+        history_msgs = []
+        try:
+            prev = repo_list_messages(conversation_id=conversation_id)
+            if prev:
+                n = max(0, int(settings.chat_history_n))
+                history_msgs = prev[-n:]
+        except Exception:
+            history_msgs = []
+
         # Mensaje del usuario
         user_msg_id = insert_message({
             "conversation_id": conversation_id,
@@ -297,37 +300,17 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
         # Contexto por email (si existe)
         email = str(user.get("email")) if (user and user.get("email")) else ""
 
-        # Historial reciente para hints conversacionales (excluye el último mensaje que acabamos de insertar)
-        prev_text = None
-        prev_messages = []
-        try:
-            history = repo_list_messages(conversation_id=conversation_id)
-            if history:
-                prev_messages = history[:-1]
-                if prev_messages:
-                    prev_text = prev_messages[-1].get("content") or None
-        except Exception:
-            prev_text = None
-            prev_messages = []
-
-        # Obtiene entity_focus previo (memoria) de la conversación
-        entity_focus = None
-        try:
-            conv = repo_get_conversation(conversation_id)
-            if conv and conv.get("metadata"):
-                entity_focus = (conv["metadata"] or {}).get("entity_focus")
-        except Exception:
-            entity_focus = None
-
-        ans = ask_service.ask(
-            email or "",
-            payload.content,
-            prev_text=prev_text,
-            prev_messages=prev_messages,
-            entity_focus=entity_focus,
-        )
-        answer_text = ans.get("respuesta") or "Sin respuesta"
+        ans = ask_service.ask(email or "", payload.content, history=history_msgs)
+        base_text = ans.get("respuesta") or "Sin respuesta"
+        followup = (ans.get("followup") or "").strip()
+        # Construye texto visible para UI (sin citas; opcionalmente agrega follow-up)
+        answer_text = base_text
+        if followup:
+            answer_text += f"\n{followup}"
         attachments_out = ans.get("attachments") or []
+        citations_out = []
+        if ans.get("offer_code"):
+            citations_out.append({"offer": ans.get("offer_code")})
 
         # Mensaje del asistente
         asst_msg_id = insert_message({
@@ -336,6 +319,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
             "role": "assistant",
             "content": answer_text,
             "attachments": attachments_out,
+            "citations": citations_out,
             "session_id": session_id,
         })
 
@@ -360,7 +344,7 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
                 role="assistant",
                 content=answer_text,
                 attachments=attachments_out,
-                citations=[],
+                citations=citations_out,
                 model_snapshot=effective_model,
                 tokens_input=None,
                 tokens_output=None,
@@ -370,24 +354,6 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
             model=effective_model,
             session_id=session_id,
         ).model_dump()
-
-        # Actualiza memoria conversacional (resumen + foco de entidad)
-        try:
-            from app.services.memory_service import summarize_incremental, choose_entity_focus
-
-            prev_summary = None
-            conv = repo_get_conversation(conversation_id)
-            if conv:
-                meta = conv.get("metadata") or {}
-                prev_summary = meta.get("summary")
-            new_summary = summarize_incremental(prev_summary, payload.content, answer_text)
-            entity_focus = choose_entity_focus(prev_messages, payload.content, answer_text)
-            fields = {"summary": new_summary}
-            if entity_focus:
-                fields["entity_focus"] = entity_focus
-            repo_update_conv_meta_fields(conversation_id, fields)
-        except Exception:
-            pass
 
         # Guardado opcional como nota
         if payload.save_note:
@@ -407,7 +373,15 @@ def chat_ask(payload: ChatAskPayload, request: Request, x_session_id: Optional[s
         dt_ms = int((monotonic() - t0) * 1000)
         # Log sencillo
         _log.info("/chat/ask mode=%s model=%s latency_ms=%s", mode, effective_model, dt_ms)
-        return {"message": "ok", **out, "user_message_id": user_msg_id, "assistant_message_id": asst_msg_id, "latency_ms": dt_ms}
+        enriched = {
+            "came_from": ans.get("came_from"),
+            "citation": ans.get("citation"),
+            "followup": ans.get("followup"),
+            "source_chunks": ans.get("source_chunks") or [],
+        }
+        base = {"message": "ok", **out, "user_message_id": user_msg_id, "assistant_message_id": asst_msg_id, "latency_ms": dt_ms}
+        base.update(enriched)
+        return base
     except HTTPException:
         raise
     except Exception as e:
@@ -481,39 +455,26 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
         except Exception:
             pass
 
-        # Historial reciente (excluye este mensaje recién insertado)
-        prev_messages = []
-        prev_text = None
-        try:
-            history = repo_list_messages(conversation_id=conversation_id)
-            if history:
-                prev_messages = history[:-1]
-                if prev_messages:
-                    prev_text = prev_messages[-1].get("content") or None
-        except Exception:
-            pass
-
-        # Obtiene entity_focus previo
-        entity_focus = None
-        try:
-            conv = repo_get_conversation(conversation_id)
-            if conv and conv.get("metadata"):
-                entity_focus = (conv["metadata"] or {}).get("entity_focus")
-        except Exception:
-            pass
-
-        ans = ask_service.ask(email or "", payload.content, prev_text=prev_text, prev_messages=prev_messages, entity_focus=entity_focus)
-        full_text = (ans.get("respuesta") or "Sin respuesta").strip()
+        ans = ask_service.ask(email or "", payload.content)
+        base_text = (ans.get("respuesta") or "Sin respuesta").strip()
+        followup = (ans.get("followup") or "").strip()
+        full_text = base_text
+        if followup:
+            full_text += f"\n{followup}"
         attachments_out = ans.get("attachments") or []
 
         def _gen():
             # Envia “open”
             yield "event: open\n" + "data: {}\n\n"
-            # Chunks de ~120 caracteres para Postman/DevTools
-            size = 120
-            for i in range(0, len(full_text), size):
-                chunk = full_text[i : i + size]
-                yield f"data: {chunk}\n\n"
+            if getattr(settings, "chat_stream_single_event", False):
+                # Un solo evento con todo el texto
+                yield f"data: {full_text}\n\n"
+            else:
+                # Chunks configurables (por defecto 400)
+                size = max(80, int(settings.chat_stream_chunk_chars))
+                for i in range(0, len(full_text), size):
+                    chunk = full_text[i : i + size]
+                    yield f"data: {chunk}\n\n"
             yield "event: end\n" + "data: {}\n\n"
 
         # Tras crear el generador, persiste el mensaje completo del asistente (no bloquea streaming)

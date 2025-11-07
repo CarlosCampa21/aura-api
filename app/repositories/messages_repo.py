@@ -73,10 +73,7 @@ def list_messages(conversation_id: Optional[str] = None, user_id: Optional[str] 
 
 
 def delete_by_conversation(conversation_id: str) -> int:
-    """Elimina todos los mensajes asociados a una conversación.
-
-    Devuelve el número de mensajes eliminados.
-    """
+    """Elimina todos los mensajes de una conversación y devuelve el conteo."""
     db = get_db()
     res = db[COLLECTION].delete_many({"conversation_id": str(conversation_id)})
     return int(res.deleted_count)

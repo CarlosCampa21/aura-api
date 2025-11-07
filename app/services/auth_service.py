@@ -84,28 +84,58 @@ def create_refresh_for_user(
 
 def rotate_refresh_token(*, current_raw: str, device_id: str, ip: str, user_agent: str) -> Tuple[str, str]:
     """
-    Valida el refresh actual (hash), lo revoca y crea uno nuevo de la misma familia.
+    Rota un refresh token asegurando tolerancia a condiciones de carrera.
+
+    - Caso feliz: token válido -> revoca y crea uno nuevo (misma familia).
+    - Caso carrera: si el token ya fue rotado (revoked_reason="rotated") y existe un hijo
+      directo vigente, rota desde el hijo para no forzar logout entre pestañas.
+
     Devuelve (new_raw, new_refresh_id).
     """
     current = repo.get_refresh_token_by_hash(_hash(current_raw))
     if not current:
         raise ValueError("Refresh token desconocido")
-    if current.get("revoked_at") is not None:
-        raise ValueError("Refresh token revocado")
-    if current.get("expires_at") <= _now_utc():
+
+    now = _now_utc()
+
+    # Token expirado
+    if current.get("expires_at") <= now:
         raise ValueError("Refresh token expirado")
 
-    repo.revoke_refresh_token(str(current["_id"]), reason="rotated")
+    # Si no está revocado: rota normalmente
+    if current.get("revoked_at") is None:
+        repo.revoke_refresh_token(str(current["_id"]), reason="rotated")
+        new_raw, new_id = create_refresh_for_user(
+            user_id=str(current["user_id"]),
+            device_id=device_id,
+            ip=ip,
+            user_agent=user_agent,
+            family_id=current["family_id"],
+            rotation_parent_id=str(current["_id"]),
+        )
+        return new_raw, new_id
 
-    new_raw, new_id = create_refresh_for_user(
-        user_id=str(current["user_id"]),
-        device_id=device_id,
-        ip=ip,
-        user_agent=user_agent,
-        family_id=current["family_id"],
-        rotation_parent_id=str(current["_id"]),
-    )
-    return new_raw, new_id
+    # Condición de carrera: ya fue rotado recientemente
+    reason = (current.get("revoked_reason") or "").lower()
+    if reason == "rotated":
+        from app.repositories.auth_repo import get_child_refresh_token
+
+        child = get_child_refresh_token(str(current["_id"]))
+        if child and child.get("revoked_at") is None and child.get("expires_at") > now:
+            # Rota desde el hijo para mantener single-use y emitir nuevo raw
+            repo.revoke_refresh_token(str(child["_id"]), reason="rotated")
+            new_raw, new_id = create_refresh_for_user(
+                user_id=str(child["user_id"]),
+                device_id=device_id,
+                ip=ip,
+                user_agent=user_agent,
+                family_id=child["family_id"],
+                rotation_parent_id=str(child["_id"]),
+            )
+            return new_raw, new_id
+
+    # En cualquier otro caso: revocado de forma no recuperable
+    raise ValueError("Refresh token revocado")
 
 
 def logout_refresh_token(*, current_raw: str) -> None:

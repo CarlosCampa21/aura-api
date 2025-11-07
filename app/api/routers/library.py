@@ -10,7 +10,12 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import RedirectResponse
 
-from app.repositories.library_repo import search_documents, get_document, insert_document
+from app.repositories.library_repo import get_document, insert_document
+from app.repositories.library_asset_repo import (
+    search_assets,
+    get_asset,
+    insert_asset,
+)
 from app.repositories.files_repo_r2 import upload_uploadfile_to_r2
 from app.infrastructure.storage import r2 as r2_storage
 
@@ -18,73 +23,193 @@ from app.infrastructure.storage import r2 as r2_storage
 router = APIRouter(prefix="/library", tags=["Library"])
 
 
-@router.get("/search", response_model=dict, summary="Buscar documentos")
+def _split_csv(s: Optional[str]) -> List[str]:
+    if not s:
+        return []
+    return [p.strip() for p in s.split(",") if p.strip()]
+
+
+async def _upload_r2_by_type(
+    *,
+    file: UploadFile,
+    type_: str,
+    title: Optional[str],
+    tags: Optional[str],
+    aliases: Optional[str] = None,
+    department: Optional[str] = None,
+    program: Optional[str] = None,
+    campus: Optional[str] = None,
+    prefix: Optional[str] = None,
+    source_is_pdf: Optional[bool] = False,
+):
+    ctype = (file.content_type or "").lower()
+
+    type_norm = (type_ or '').strip().lower()
+    if type_norm not in {"media", "docs", "rag"}:
+        raise HTTPException(status_code=400, detail="type inválido. Use: media | docs | rag")
+
+    allowed_media = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml"}
+    allowed_docs = {
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/csv",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+
+    if type_norm == "media":
+        if ctype not in allowed_media:
+            raise HTTPException(status_code=415, detail=f"Tipo no permitido para media: {ctype}")
+        pf = prefix.strip() if (prefix and prefix.strip()) else "library/media/"
+        if not pf.startswith("library/media/"):
+            raise HTTPException(status_code=400, detail="Prefijo inválido para media; use library/media/")
+        if not pf.endswith("/"):
+            pf += "/"
+        url = await upload_uploadfile_to_r2(file, prefix=pf)
+        asset = {
+            "title": title or (file.filename or "Imagen"),
+            "tags": _split_csv(tags),
+            "mime_type": ctype,
+            "url": url,
+            "enabled": True,
+            "downloadable": True,
+            "version": 1,
+            "meta": {"aliases": _split_csv(aliases) if aliases else []},
+        }
+        asset_id = insert_asset(asset)
+        return {"message": "ok", "id": asset_id, "title": asset["title"], "url": url}
+
+    if type_norm == "docs":
+        if ctype not in allowed_docs:
+            raise HTTPException(status_code=415, detail=f"Tipo no permitido para docs: {ctype}")
+        pf = prefix.strip() if (prefix and prefix.strip()) else "library/docs/"
+        if not pf.startswith("library/docs/"):
+            raise HTTPException(status_code=400, detail="Prefijo inválido para docs; use library/docs/")
+        if not pf.endswith("/"):
+            pf += "/"
+        url = await upload_uploadfile_to_r2(file, prefix=pf)
+        asset = {
+            "title": title or (file.filename or "Documento"),
+            "tags": _split_csv(tags),
+            "mime_type": ctype,
+            "url": url,
+            "enabled": True,
+            "downloadable": True,
+            "version": 1,
+            "meta": {
+                "aliases": _split_csv(aliases) if aliases else [],
+                "department": department,
+                "program": program,
+                "campus": campus,
+            },
+        }
+        asset_id = insert_asset(asset)
+        return {"message": "ok", "id": asset_id, "title": asset["title"], "url": url}
+
+    # rag
+    if ctype not in allowed_docs:
+        raise HTTPException(status_code=415, detail=f"Tipo no permitido para rag: {ctype}")
+    pf = prefix.strip() if (prefix and prefix.strip()) else "library/rag/"
+    if not pf.startswith("library/rag/"):
+        raise HTTPException(status_code=400, detail="Prefijo inválido para rag; use library/rag/")
+    if not pf.endswith("/"):
+        pf += "/"
+    url = await upload_uploadfile_to_r2(file, prefix=pf)
+    doc = {
+        "title": title or (file.filename or "Documento RAG"),
+        "kind": "rag",
+        "content_type": ctype,
+        "url": url,
+        "source_pdf_url": url if source_is_pdf else None,
+        "tags": _split_csv(tags),
+        "enabled": True,
+        "version": 1,
+        "ingest": {
+            "embed_model": "text-embedding-3-small",
+            "chunk_size": 800,
+            "chunk_overlap": 160,
+            "last_ingested_at": None,
+            "status": "pending",
+        },
+    }
+    doc_id = insert_document(doc)
+    return {"message": "ok", "id": doc_id, "title": doc["title"], "url": url}
+
+
+@router.get("/search", response_model=dict, summary="Buscar assets descargables (library_asset)")
 def search(q: str = Query(..., min_length=2), limit: int = Query(5, ge=1, le=20)):
     try:
-        items = search_documents(q, limit=limit)
+        items = search_assets(q, limit=limit)
         return {"results": items}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo buscar: {e}")
 
 
-@router.post("/upload", response_model=dict, summary="Subir documento a R2 y registrar metadatos")
-async def upload_document(
+@router.get("/assets/search", response_model=dict, summary="Buscar assets descargables (library_asset)")
+def search_assets_api(q: str = Query(..., min_length=2), limit: int = Query(5, ge=1, le=20)):
+    try:
+        items = search_assets(q, limit=limit)
+        return {"results": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo buscar: {e}")
+
+
+@router.post("/upload", response_model=dict, summary="Subir a R2 por tipo (media/docs/rag)")
+async def upload_asset(
     file: UploadFile = File(...),
+    type: str = Form(..., description="media | docs | rag"),
     title: Optional[str] = Form(default=None),
     aliases: Optional[str] = Form(default=None, description="Lista separada por comas"),
     tags: Optional[str] = Form(default=None, description="Lista separada por comas"),
     department: Optional[str] = Form(default=None),
     program: Optional[str] = Form(default=None),
     campus: Optional[str] = Form(default=None),
-    prefix: Optional[str] = Form(default="library/", description="Prefijo en R2, p.ej. library/docentes/"),
+    prefix: Optional[str] = Form(default=None, description="Prefijo en R2 (opcional). Se valida por tipo."),
+    source_is_pdf: Optional[bool] = Form(default=False, description="Sólo para type=rag: copiar URL a source_pdf_url"),
 ):
     try:
-        # Validación simple de tipo
-        ctype = (file.content_type or "").lower()
-        allowed = {
-            # Documentos
-            "application/pdf",
-            "text/plain",
-            "text/markdown",
-            "text/csv",
-            "application/csv",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # docx
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",       # xlsx
-            # Imágenes comunes (por si se requieren en otros flujos)
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-        }
-        if ctype not in allowed:
-            raise HTTPException(status_code=415, detail=f"Tipo no permitido: {ctype}")
+        return await _upload_r2_by_type(
+            file=file,
+            type_=type,
+            title=title,
+            tags=tags,
+            aliases=aliases,
+            department=department,
+            program=program,
+            campus=campus,
+            prefix=prefix,
+            source_is_pdf=source_is_pdf,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo subir el asset: {e}")
 
-        # Sube a R2
-        pf = (prefix or "library/").strip()
-        if not pf.endswith("/"):
-            pf = pf + "/"
-        url = await upload_uploadfile_to_r2(file, prefix=pf)
 
-        # Parseo de listas
-        def _split_csv(s: Optional[str]) -> List[str]:
-            if not s:
-                return []
-            return [p.strip() for p in s.split(",") if p.strip()]
+@router.post("/media/upload", response_model=dict, summary="Subir imagen (R2 → library_asset en library/media)")
+async def upload_media(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(default=None),
+    tags: Optional[str] = Form(default=None, description="Lista separada por comas"),
+):
+    try:
+        return await _upload_r2_by_type(file=file, type_="media", title=title, tags=tags)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo subir la imagen: {e}")
 
-        doc = {
-            "title": title or (file.filename or "Documento"),
-            "aliases": _split_csv(aliases),
-            "tags": _split_csv(tags),
-            "department": department,
-            "program": program,
-            "campus": campus,
-            "status": "active",
-            "url": url,
-            "content_type": ctype,
-        }
 
-        # Inserta metadatos en library_doc (sync)
-        doc_id = insert_document(doc)
-        return {"message": "ok", "id": doc_id, "title": doc["title"], "url": url}
+@router.post("/docs/upload", response_model=dict, summary="Subir documento (R2 → library_asset en library/docs)")
+async def upload_docs(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(default=None),
+    tags: Optional[str] = Form(default=None, description="Lista separada por comas"),
+):
+    try:
+        return await _upload_r2_by_type(file=file, type_="docs", title=title, tags=tags)
     except HTTPException:
         raise
     except Exception as e:
@@ -113,24 +238,25 @@ def debug_r2():
             "head_bucket_ok": ok,
             "error": err,
         }
+
     except Exception as e:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"No se pudo diagnosticar R2: {e}")
 
 
-@router.get("/{doc_id}/open", summary="Abrir documento (redirect a URL pública)")
-def open_document(doc_id: str):
-    d = get_document(doc_id)
+@router.get("/assets/{asset_id}/open", summary="Abrir asset (redirect a URL pública)")
+def open_asset(asset_id: str):
+    d = get_asset(asset_id)
     if not d or not d.get("file_url"):
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
+        raise HTTPException(status_code=404, detail="Asset no encontrado")
     # Redirige a la URL pública en R2. Mantiene tu API estable sin exponer claves.
     return RedirectResponse(url=str(d["file_url"]))
 
 
-@router.get("/{doc_id}/download", summary="Descargar documento (URL firmada)")
-def download_document(doc_id: str):
-    d = get_document(doc_id)
+@router.get("/assets/{asset_id}/download", summary="Descargar asset (URL firmada)")
+def download_asset(asset_id: str):
+    d = get_asset(asset_id)
     if not d or not d.get("file_url"):
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
+        raise HTTPException(status_code=404, detail="Asset no encontrado")
     key = r2_storage.derive_key_from_url(str(d["file_url"]))
     if not key:
         raise HTTPException(status_code=400, detail="No se pudo derivar la clave del objeto")
@@ -149,9 +275,31 @@ def download_by_url(u: str = Query(..., description="URL pública del objeto en 
     return RedirectResponse(url=url)
 
 
-@router.get("/{doc_id}", response_model=dict, summary="Obtener documento")
-def get(doc_id: str):
-    d = get_document(doc_id)
+@router.get("/assets/{asset_id}", response_model=dict, summary="Obtener asset")
+def get_asset_by_id(asset_id: str):
+    d = get_asset(asset_id)
     if not d:
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
-    return {"document": d}
+        raise HTTPException(status_code=404, detail="Asset no encontrado")
+    return {"asset": d}
+
+@router.post("/rag/upload", response_model=dict, summary="Subir documento para RAG (R2 → library_doc) en library/rag")
+async def upload_rag_document(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(default=None),
+    tags: Optional[str] = Form(default=None, description="Lista separada por comas"),
+    prefix: Optional[str] = Form(default="library/rag/", description="Prefijo en R2, p.ej. library/rag/calendarios/"),
+    source_is_pdf: Optional[bool] = Form(default=False, description="Marcar URL fuente como PDF oficial"),
+):
+    try:
+        return await _upload_r2_by_type(
+            file=file,
+            type_="rag",
+            title=title,
+            tags=tags,
+            prefix=prefix,
+            source_is_pdf=source_is_pdf,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo subir el documento RAG: {e}")
