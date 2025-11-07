@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     chat_auth_rate_per_min: int = 30
     chat_guest_stream_rate_per_min: int = 8
     chat_auth_stream_rate_per_min: int = 20
+    chat_stream_chunk_chars: int = Field(
+        400,
+        validation_alias=AliasChoices("AURA_CHAT_STREAM_CHUNK", "CHAT_STREAM_CHUNK"),
+    )
+    chat_stream_single_event: bool = Field(
+        True,
+        validation_alias=AliasChoices("AURA_CHAT_STREAM_SINGLE", "CHAT_STREAM_SINGLE"),
+        description="Si es True, el endpoint /chat/ask/stream envía toda la respuesta en un solo evento SSE",
+    )
     chat_prompt_max_chars_guest: int = 800
     chat_prompt_max_chars_auth: int = 4000
 

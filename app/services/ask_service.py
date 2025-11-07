@@ -134,7 +134,11 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "attachments": [],
         }
 
-    # C) Intención académica → construye contexto breve
+    # C) Intención académica → casos directos (calendario)
+    if _is_calendar_request(question):
+        return _answer_calendar_request(question)
+
+    # C2) Construye contexto breve
     ctx = build_academic_context(user_email)
 
     # 2) RAG primero: si hay evidencia útil, nos quedamos con esa respuesta
@@ -142,9 +146,10 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
         q_eff = _rewrite_temporal_phrases(question, user_email)
         q_eff = _bias_asueto_query(q_eff)
         q_eff = _bias_exam_query(q_eff)
+        q_eff = _bias_upcoming_query(q_eff, user_email)
         rag = answer_with_rag(q_eff, k=10)
         if rag and rag.get("used_context") and rag.get("answer"):
-            ans = _strip_citations(str(rag.get("answer") or ""))
+            ans = _clean_text(str(rag.get("answer") or ""))
             return {
                 "pregunta": question,
                 "respuesta": ans,
@@ -152,7 +157,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 "came_from": rag.get("came_from") or "rag",
                 "citation": rag.get("citation") or "",
                 "source_chunks": rag.get("source_chunks") or [],
-                "followup": _maybe_contextual_followup(question, ans, history) if settings.chat_followups_enabled else "",
+                "followup": ("¿Puedo ayudarte con otra cosa?") if settings.chat_followups_enabled else "",
                 "offer_code": _offer_code_for(question, ans, _detect_topic(question, ans)),
                 "attachments": _extract_urls(ans),
             }
@@ -164,14 +169,12 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     if oa_answer and isinstance(oa_answer, dict) and (oa_answer.get("answer") or "").strip():
         return {
             "pregunta": question,
-            "respuesta": _strip_citations(oa_answer.get("answer") or ""),
+            "respuesta": _clean_text(oa_answer.get("answer") or ""),
             "contexto_usado": True,
             "came_from": oa_answer.get("origin") or "tool",
             "citation": "",
             "source_chunks": [],
-            "followup": (
-                _maybe_contextual_followup(question, oa_answer.get("answer") or "", history) or _suggest_followup_tool(question, oa_answer.get("origin"))
-            ) if settings.chat_followups_enabled else "",
+            "followup": ("¿Puedo ayudarte con otra cosa?") if settings.chat_followups_enabled else "",
             "offer_code": _offer_code_for(question, oa_answer.get("answer") or "", _detect_topic(question, oa_answer.get("answer") or "")),
             "attachments": _extract_urls(str(oa_answer.get("answer") or "")),
         }
@@ -181,14 +184,12 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     if tool_answer:
         return {
             "pregunta": question,
-            "respuesta": _strip_citations(tool_answer),
+            "respuesta": _clean_text(tool_answer),
             "contexto_usado": True,
             "came_from": "schedule",
             "citation": "",
             "source_chunks": [],
-            "followup": (
-                _maybe_contextual_followup(question, tool_answer, history) or "¿Te muestro también tus clases de mañana?"
-            ) if settings.chat_followups_enabled else "",
+            "followup": ("¿Puedo ayudarte con otra cosa?") if settings.chat_followups_enabled else "",
             "offer_code": _offer_code_for(question, tool_answer, _detect_topic(question, tool_answer)),
             "attachments": _extract_urls(tool_answer),
         }
@@ -197,12 +198,12 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     answer = ask_llm(question, ctx, history=history)
     return {
         "pregunta": question,
-        "respuesta": _strip_citations(answer),
+        "respuesta": _clean_text(answer),
         "contexto_usado": bool(ctx and ctx != "Sin datos académicos del alumno aún."),
         "came_from": "llm",
         "citation": "",
         "source_chunks": [],
-        "followup": (_maybe_contextual_followup(question, answer, history) or "") if settings.chat_followups_enabled else "",
+        "followup": ("¿Puedo ayudarte con otra cosa?") if settings.chat_followups_enabled else "",
         "offer_code": _offer_code_for(question, answer, _detect_topic(question, answer)),
         "attachments": _extract_urls(answer),
     }
@@ -309,9 +310,8 @@ def _is_academic_intent(q: str | None) -> bool:
 SOCIAL_SYSTEM = (
     "Eres AURA, asistente de la UABCS. Responde saludos y charla casual en español "
     "de forma breve, cordial y profesional (1–2 oraciones). Evita conversación personal "
-    "(no preguntes planes del día, estados de ánimo, etc.). Redirige siempre hacia la "
-    "ayuda académica: termina con una pregunta breve de orientación como '¿En qué puedo "
-    "apoyarte con calendario, materias o trámites?'. No uses listas, ni markdown, ni citas."
+    "(no preguntes planes del día, estados de ánimo, etc.). Si es posible, orienta a ayuda "
+    "académica de forma natural, sin agregar preguntas de cierre obligatorias."
 )
 
 
@@ -331,12 +331,12 @@ def _social_llm_reply(prompt: str, history: list[dict] | None) -> str:
         # Garantiza cierre orientado a ayuda académica y evita desvíos personales
         help_re = re.compile(r"(en que puedo (ayudarte|apoyarte)|como puedo ayudarte)", re.IGNORECASE)
         personal_re = re.compile(r"\b(plan(es)?|\btu d[ií]a\b|como te sientes|que tal tu d[ií]a)\b", re.IGNORECASE)
-        if not help_re.search(out):
-            # Añade una pregunta de ayuda si no está presente
-            out = (out.rstrip(" .!") + ". ¿En qué puedo apoyarte con calendario, materias o trámites?").strip()
+        if settings.chat_followups_enabled and not help_re.search(out):
+            # Añade una pregunta genérica de ayuda sólo si está habilitado
+            out = (out.rstrip(" .!") + ". ¿Puedo ayudarte con otra cosa?").strip()
         if personal_re.search(out):
             # Sustituye partes personales por orientación útil
-            out = "¿En qué puedo apoyarte con calendario, materias o trámites?"
+            out = ("¿Puedo ayudarte con otra cosa?" if settings.chat_followups_enabled else "Puedo ayudarte con tus trámites o calendario.")
         return out
     except Exception:
         # Fallback a plantillas si falla la API
@@ -357,6 +357,74 @@ def _suggest_followup_tool(question: str, origin: str | None) -> str:
     if "calendario" in q or "semestre" in q:
         return "¿Quieres ver también las fechas de exámenes?"
     return "¿Deseas que amplíe con información relacionada?"
+
+
+# --- Respuesta directa para "calendario" (PDF + resumen) ---
+_CALENDAR_REQ_RE = re.compile(r"\b(calendario|calendario\s+escolar|calendario\s+acad[eé]mico)\b", re.IGNORECASE)
+_WANTS_PDF_RE = re.compile(r"\b(pdf|archivo|documento|descargar|desc[aá]rgalo|ver|abre|enlace|link)\b", re.IGNORECASE)
+
+
+def _is_calendar_request(q: str | None) -> bool:
+    return bool(q and _CALENDAR_REQ_RE.search(q))
+
+
+def _answer_calendar_request(question: str) -> dict:
+    url = None
+    title = "Calendario escolar"
+    try:
+        from app.services.library_service import find_calendar_pdf_url
+
+        hit = find_calendar_pdf_url()
+        if hit and hit.get("url"):
+            url = str(hit.get("url"))
+            title = str(hit.get("title") or title)
+    except Exception:
+        url = None
+
+    wants_pdf = bool(_WANTS_PDF_RE.search(question or ""))
+
+    # Si el usuario pidió explícitamente el PDF/documento, responde minimalista
+    if wants_pdf and url:
+        text = f"Aquí está el documento solicitado: {url}"
+        return {
+            "pregunta": question,
+            "respuesta": text,
+            "contexto_usado": True,
+            "came_from": "calendar",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "",
+            "attachments": [url],
+        }
+
+    # Si no lo pidió explícitamente, ofrece PDF + resumen breve
+    try:
+        q = (
+            "Resumen breve del calendario escolar 2025: inicio y fin de clases de ambos semestres, "
+            "fechas de exámenes ordinarios y extraordinarios. En 3–5 líneas, claro y sin citas."
+        )
+        rag = answer_with_rag(q, k=12)
+        summary = _clean_text(str(rag.get("answer") or ""))
+    except Exception:
+        summary = ""
+
+    parts = []
+    if url:
+        parts.append(f"{title} (PDF): {url}")
+    if summary:
+        parts.append(summary)
+    text = "\n\n".join(parts) if parts else "Aquí tienes el calendario escolar."
+
+    return {
+        "pregunta": question,
+        "respuesta": text,
+        "contexto_usado": True,
+        "came_from": "calendar",
+        "citation": "",
+        "source_chunks": [],
+        "followup": "",  # sin orquestación/preguntas finales
+        "attachments": [url] if url else [],
+    }
 
 
 # --- Follow‑ups contextuales y variados ---
@@ -524,6 +592,26 @@ def _strip_citations(text: str) -> str:
     return out
 
 
+def _strip_markdown_styles(text: str) -> str:
+    """Elimina marcadores Markdown básicos (negritas/itálicas/código)."""
+    if not text:
+        return text
+    out = text
+    # **bold** y __bold__
+    out = re.sub(r"\*\*([^\*\n]+)\*\*", r"\1", out)
+    out = re.sub(r"__([^_\n]+)__", r"\1", out)
+    # *italic* y _italic_
+    out = re.sub(r"\*([^\*\n]+)\*", r"\1", out)
+    out = re.sub(r"_([^_\n]+)_", r"\1", out)
+    # `code`
+    out = re.sub(r"`([^`]+)`", r"\1", out)
+    return out
+
+
+def _clean_text(text: str) -> str:
+    return _strip_markdown_styles(_strip_citations(text or ""))
+
+
 _NO_CLASSES_HINT = re.compile(r"\b(no\s+hay\s+clases|sin\s+clases|dia\s+sin\s+clases|d[ií]a\s+sin\s+clases)\b", re.IGNORECASE)
 
 
@@ -546,6 +634,47 @@ def _bias_exam_query(q: str) -> str:
     if _EXAM_HINT_RE.search(s) and not _EXAM_WORD_RE.search(s):
         return f"{s} (exámenes ordinarios, fechas de exámenes, periodo de exámenes)"
     return s
+
+
+# --- Sesgo hacia "próxima fecha" si el usuario no especifica periodo ---
+_MONTH_NAMES_RE = re.compile(
+    r"\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b",
+    re.IGNORECASE,
+)
+_YEAR_RE = re.compile(r"\b20\d{2}\b")
+_WHEN_HINT_RE = re.compile(
+    r"\b(cu[aá]ndo|cuando|fecha|fechas|proximo|pr[oó]ximo|siguiente|egreso|graduaci[oó]n|ceremonia|ex[aá]men|inscripci[oó]n|reinscripci[oó]n|vacacion|asueto|inicio de clases|fin de clases)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_explicit_period(text: str) -> bool:
+    s = text or ""
+    if _MONTH_NAMES_RE.search(s):
+        return True
+    if _YEAR_RE.search(s):
+        return True
+    # patrón simple "d de <mes>"
+    if re.search(r"\b\d{1,2}\s+de\s+" + _MONTH_NAMES_RE.pattern, s, re.IGNORECASE):
+        return True
+    return False
+
+
+def _format_today_es(d: datetime) -> str:
+    mes = _MONTHS_ES.get(d.month, str(d.month))
+    return f"{d.day} de {mes} de {d.year}"
+
+
+def _bias_upcoming_query(q: str, user_email: str | None) -> str:
+    """Si la pregunta sugiere fechas pero no especifica periodo, orienta a 'próxima fecha'."""
+    s = q or ""
+    if not _WHEN_HINT_RE.search(s):
+        return s
+    if _has_explicit_period(s):
+        return s
+    now = _now_local(user_email)
+    today = _format_today_es(now)
+    return f"{s} (responde con la próxima fecha a partir de hoy {today}; siguiente evento del calendario)"
 
 
 # --- Continuidad: confirmaciones breves sí/no ---

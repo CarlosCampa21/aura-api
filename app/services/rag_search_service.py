@@ -6,6 +6,8 @@ dar más señal al LLM (ej., categoría "docentes", tag "dasc").
 from __future__ import annotations
 
 from typing import List, Dict
+from datetime import datetime
+import re
 
 from app.infrastructure.ai.embeddings import embed_texts
 from app.repositories.library_chunk_repo import knn_search
@@ -30,6 +32,19 @@ SYSTEM = (
 def _build_context(snippets: List[str]) -> str:
     joined = "\n\n".join(snippets)
     return f"Extractos confiables (usa solo lo que veas):\n{joined}"
+
+
+def _strip_markdown_styles(text: str) -> str:
+    """Elimina marcadores Markdown básicos para respuestas planas."""
+    if not text:
+        return text
+    out = text
+    out = re.sub(r"\*\*([^\*\n]+)\*\*", r"\1", out)
+    out = re.sub(r"__([^_\n]+)__", r"\1", out)
+    out = re.sub(r"\*([^\*\n]+)\*", r"\1", out)
+    out = re.sub(r"_([^_\n]+)_", r"\1", out)
+    out = re.sub(r"`([^`]+)`", r"\1", out)
+    return out
 
 
 def answer_with_rag(question: str, k: int = 5) -> dict:
@@ -95,11 +110,25 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
     ctx = _build_context(snippets)
 
     oa = get_openai()
+    # Instrucción dinámica de ‘hoy’ para preferir fechas futuras
+    months = {
+        1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+        7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+    }
+    now = datetime.now()
+    today_es = f"{now.day} de {months.get(now.month, now.month)} de {now.year}"
+    system_dyn = (
+        SYSTEM
+        + " Hoy es "
+        + today_es
+        + ". Si el contexto muestra varias fechas, elige la más próxima posterior a hoy."
+        + " Si todas las fechas de una sección ya pasaron, indícalo brevemente y menciona la siguiente programada si existe."
+    )
     if oa:
         resp = oa.chat.completions.create(
             model=settings.openai_model_primary,
             messages=[
-                {"role": "system", "content": SYSTEM},
+                {"role": "system", "content": system_dyn},
                 {"role": "user", "content": f"Contexto:\n{ctx}\n---\nPregunta: {question}"},
             ],
             temperature=getattr(settings, "rag_temperature", settings.chat_temperature),
@@ -108,13 +137,15 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
             frequency_penalty=settings.chat_frequency_penalty,
         )
         out = (resp.choices[0].message.content or "").strip()
-        followup = _suggest_followup(question) if settings.chat_followups_enabled else ""
+        out = _strip_markdown_styles(out)
+        followup = "¿Puedo ayudarte con otra cosa?" if settings.chat_followups_enabled else ""
         # Nota: no devolvemos citas ni chunks para evitar paréntesis en UI
         return {"answer": out or "Sin respuesta.", "used_context": True, "came_from": "rag", "citation": "", "source_chunks": [], "followup": followup}
 
     # Fallback al pipeline genérico si no hay OpenAI
-    text = ask_llm(question, ctx)
-    followup = _suggest_followup(question) if settings.chat_followups_enabled else ""
+    text = ask_llm(question, ctx, system=system_dyn)
+    text = _strip_markdown_styles(text)
+    followup = "¿Puedo ayudarte con otra cosa?" if settings.chat_followups_enabled else ""
     return {"answer": text, "used_context": True, "came_from": "rag", "citation": "", "source_chunks": [], "followup": followup}
 
 

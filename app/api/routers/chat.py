@@ -466,11 +466,15 @@ def chat_ask_stream(payload: ChatAskPayload, request: Request, x_session_id: Opt
         def _gen():
             # Envia “open”
             yield "event: open\n" + "data: {}\n\n"
-            # Chunks de ~120 caracteres para Postman/DevTools
-            size = 120
-            for i in range(0, len(full_text), size):
-                chunk = full_text[i : i + size]
-                yield f"data: {chunk}\n\n"
+            if getattr(settings, "chat_stream_single_event", False):
+                # Un solo evento con todo el texto
+                yield f"data: {full_text}\n\n"
+            else:
+                # Chunks configurables (por defecto 400)
+                size = max(80, int(settings.chat_stream_chunk_chars))
+                for i in range(0, len(full_text), size):
+                    chunk = full_text[i : i + size]
+                    yield f"data: {chunk}\n\n"
             yield "event: end\n" + "data: {}\n\n"
 
         # Tras crear el generador, persiste el mensaje completo del asistente (no bloquea streaming)
