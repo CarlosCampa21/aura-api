@@ -47,7 +47,7 @@ def _strip_markdown_styles(text: str) -> str:
     return out
 
 
-def answer_with_rag(question: str, k: int = 5) -> dict:
+def answer_with_rag(question: str, k: int = 5, *, return_sources: bool = False) -> dict:
     """Realiza RAG: embedding de pregunta → knn → redacción sin fuentes."""
     vectors = embed_texts([question])
     qv = vectors[0] if vectors else []
@@ -140,13 +140,13 @@ def answer_with_rag(question: str, k: int = 5) -> dict:
         out = _strip_markdown_styles(out)
         followup = "¿Puedo ayudarte con otra cosa?" if settings.chat_followups_enabled else ""
         # Nota: no devolvemos citas ni chunks para evitar paréntesis en UI
-        return {"answer": out or "Sin respuesta.", "used_context": True, "came_from": "rag", "citation": "", "source_chunks": [], "followup": followup}
+        return {"answer": out or "Sin respuesta.", "used_context": True, "came_from": "rag", "citation": "", "source_chunks": (source_chunks if return_sources else []), "followup": followup}
 
     # Fallback al pipeline genérico si no hay OpenAI
     text = ask_llm(question, ctx, system=system_dyn)
     text = _strip_markdown_styles(text)
     followup = "¿Puedo ayudarte con otra cosa?" if settings.chat_followups_enabled else ""
-    return {"answer": text, "used_context": True, "came_from": "rag", "citation": "", "source_chunks": [], "followup": followup}
+    return {"answer": text, "used_context": True, "came_from": "rag", "citation": "", "source_chunks": (source_chunks if return_sources else []), "followup": followup}
 
 
 def _suggest_followup(question: str) -> str:

@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.services.rag_ingest_service import ingest_document
 from app.repositories.library_repo import list_active_documents
 from app.services.rag_search_service import answer_with_rag
+from app.repositories.library_chunk_repo import delete_by_doc_id, delete_by_title
 
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
@@ -46,9 +47,27 @@ def ingest_all(limit: int = Query(100, ge=1, le=1000)):
 
 
 @router.get("/search", summary="Búsqueda RAG con respuesta redactada (sin fuentes)")
-def rag_search(q: str = Query(..., min_length=2), k: int = Query(default=settings.rag_k_default, ge=1, le=10)):
+def rag_search(q: str = Query(..., min_length=2), k: int = Query(default=settings.rag_k_default, ge=1, le=10), debug: bool = Query(False)):
     try:
-        res = answer_with_rag(q, k=k)
+        res = answer_with_rag(q, k=k, return_sources=debug)
         return {"message": "ok", **res}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo buscar: {e}")
+
+
+@router.delete("/chunks/{doc_id}", summary="Eliminar todos los chunks de un documento RAG por doc_id")
+def rag_delete_chunks(doc_id: str):
+    try:
+        n = delete_by_doc_id(doc_id)
+        return {"message": "ok", "deleted": n}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo eliminar: {e}")
+
+
+@router.delete("/chunks", summary="Eliminar chunks por título (meta.title)")
+def rag_delete_chunks_by_title(title: str, regex: bool = Query(False, description="Si es true, usa búsqueda regex insensible a mayúsculas")):
+    try:
+        n = delete_by_title(title, regex=regex)
+        return {"message": "ok", "deleted": n}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo eliminar: {e}")

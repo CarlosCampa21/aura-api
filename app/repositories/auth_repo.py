@@ -129,3 +129,14 @@ def revoke_family(family_id: str, reason: str) -> None:
         {"family_id": family_id, "revoked_at": None},
         {"$set": {"revoked_at": _dt(datetime.utcnow()), "revoked_reason": reason}},
     )
+
+
+def get_child_refresh_token(parent_id: str) -> Optional[Dict[str, Any]]:
+    """Obtiene el hijo directo de una rotación (si existe), más reciente.
+
+    Útil para tolerar condiciones de carrera: si un refresh ya fue rotado,
+    se puede continuar la rotación desde su hijo sin forzar logout.
+    """
+    return get_db()[RT_COLL].find_one(
+        {"rotation_parent_id": ObjectId(parent_id)}, sort=[("created_at", -1)]
+    )

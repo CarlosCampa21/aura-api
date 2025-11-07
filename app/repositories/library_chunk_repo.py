@@ -26,6 +26,20 @@ def delete_by_doc_id(doc_id: str) -> int:
     return int(res.deleted_count)
 
 
+def delete_by_title(title: str, *, regex: bool = False) -> int:
+    """Elimina chunks cuyo `meta.title` coincide con el título dado.
+
+    - Si `regex` es False (default), usa coincidencia exacta del campo.
+    - Si `regex` es True, usa expresión regular insensible a mayúsculas.
+    """
+    db = get_db()
+    if not title:
+        return 0
+    filtro = {"meta.title": title} if not regex else {"meta.title": {"$regex": title, "$options": "i"}}
+    res = db[COLL].delete_many(filtro)
+    return int(res.deleted_count)
+
+
 def bulk_insert_chunks(doc_id: str, chunks: Iterable[Dict[str, Any]]) -> int:
     """Inserta en bloque chunks ya procesados para un documento.
 

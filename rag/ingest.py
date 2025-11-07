@@ -13,6 +13,7 @@ from typing import Any
 
 from app.services.rag_ingest_service import ingest_document
 from app.repositories.library_repo import list_active_documents
+from app.infrastructure.db.mongo import init_mongo
 
 
 def _print(obj: Any) -> None:
@@ -20,6 +21,8 @@ def _print(obj: Any) -> None:
 
 
 def main() -> None:
+    # Inicializa conexión Mongo para usar repos/servicios fuera del servidor
+    init_mongo()
     p = argparse.ArgumentParser(description="Ingesta RAG (documento o lote)")
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--doc-id", help="ID de documento en library_doc")
@@ -45,4 +48,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
