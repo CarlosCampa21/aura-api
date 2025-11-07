@@ -232,7 +232,8 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
         sgpp_url = "https://sgpp-client.vercel.app/"
         text = (
             "Para más información y para registrarte/iniciar tus prácticas, usa el Sistema Gestor de Prácticas Profesionales (SGPP)."
-            " Ahí podrás consultar requisitos, fechas y completar tu registro."
+            " Ahí podrás consultar requisitos, fechas y completar tu registro.\n"
+            f"Más información y registro: {sgpp_url}"
         )
         return {
             "pregunta": question,
@@ -805,7 +806,8 @@ def _is_sgpp_link_request(q: str | None) -> bool:
 
 # --- Prácticas: pedir sitio/link general ---
 _PRACTICES_LINKISH_RE = re.compile(
-    r"\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b.*\b(sitio|p[aá]gina|web|link|enlace|informaci[oó]n|d[oó]nde|donde)\b",
+    r"\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b.*\b(sitio|p[aá]gina|web|link|enlace|informaci[oó]n|d[oó]nde|donde)\b|"
+    r"\b(sitio|p[aá]gina|web|link|enlace|informaci[oó]n|d[oó]nde|donde)\b.*\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b",
     re.IGNORECASE,
 )
 
