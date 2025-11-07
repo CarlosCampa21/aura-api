@@ -20,11 +20,12 @@ from app.infrastructure.ai.ai_service import ask_llm
 SYSTEM = (
     "Usa únicamente la información del contexto para responder. "
     "Responde con un tono cordial e institucional. "
-    "Da una respuesta clara y completa con la información encontrada. "
-    "Al final incluye entre paréntesis una cita breve indicando el origen del dato "
-    "(ejemplo: Calendario Escolar UABCS 2025 — Actividades 2025-II). "
+    "Da una respuesta clara y concisa con la información encontrada. "
     "No inventes información fuera del contexto disponible. "
-    "Si no aparece la respuesta en el contexto, dilo con claridad y ofrece ayuda para buscarla."
+    "No incluyas citas, referencias ni el nombre del documento fuente. "
+    "Si no aparece la respuesta en el contexto, dilo con claridad y ofrece ayuda para buscarla. "
+    "No sugieras consultar sitios web externos; pide un dato mínimo para continuar o indica que seguirás buscando. "
+    "No hagas suposiciones ni inventes datos."
 )
 
 
@@ -47,9 +48,10 @@ def _strip_markdown_styles(text: str) -> str:
     return out
 
 
-def answer_with_rag(question: str, k: int = 5, *, return_sources: bool = False) -> dict:
+def answer_with_rag(question: str, k: int = 5, *, return_sources: bool = False, continuation_person: str | None = None) -> dict:
     """Realiza RAG: embedding de pregunta → knn → redacción sin fuentes."""
-    vectors = embed_texts([question])
+    q_for_embed = _rewrite_query_people(question)
+    vectors = embed_texts([q_for_embed])
     qv = vectors[0] if vectors else []
     # Usa k por parámetro o default desde settings
     eff_k = int(k or 0) or settings.rag_k_default
@@ -66,6 +68,62 @@ def answer_with_rag(question: str, k: int = 5, *, return_sources: bool = False) 
     # Para salida enriquecida (deshabilitado para UI: no citamos fuentes)
     source_chunks: List[Dict[str, str]] = []
     per_doc_count: Dict[str, int] = {}
+    # Prefetch títulos para un reordenamiento ligero por nombre
+    title_cache: Dict[str, str] = {}
+    q_low = (question or "").lower()
+    name_tokens = [t for t in re.findall(r"[a-záéíóúñ]{3,}", q_low) if t not in {"quien", "quién", "que", "qué", "hace", "correo", "email", "de", "la", "el"}]
+    # Obtén títulos y calcula pequeño boost por coincidencia en título
+    def _boost(h: dict) -> int:
+        did = str(h.get("doc_id") or "")
+        if not did:
+            return 0
+        if did not in title_cache:
+            try:
+                d = get_document(did)
+                title_cache[did] = (d.get("title") if d else "") or ""
+            except Exception:
+                title_cache[did] = ""
+        title = title_cache.get(did, "").lower()
+        return sum(1 for t in name_tokens if t and t in title)
+
+    wants_email = any(w in q_low for w in ("correo", "email", "e-mail", "mail"))
+    is_dept_head_query = ("jefe" in q_low and "depart" in q_low)
+
+    def _token_score(h: dict) -> int:
+        txt = (h.get("text") or "").lower()
+        score = 0
+        if wants_email and "@" in txt:
+            score += 2
+        if is_dept_head_query and ("jefe" in txt and "depart" in txt):
+            score += 2
+        if "dasc" in q_low and ("dasc" in txt or "sistemas computacionales" in txt):
+            score += 1
+        return score
+
+    if name_tokens or wants_email or is_dept_head_query:
+        hits.sort(key=lambda h: (_boost(h), _token_score(h), float(h.get("score", 0.0))), reverse=True)
+
+    # Si buscamos correo/jefatura y aún no hay candidatos con tokens relevantes, amplía k y reintenta ordenar
+    if (wants_email or is_dept_head_query) and not any(_token_score(h) > 0 for h in hits):
+        extra = knn_search(qv, k=max(eff_k, 100))
+        if extra:
+            hits = extra
+            # recalcular caches
+            title_cache = {}
+            def _boost2(h: dict) -> int:
+                did = str(h.get("doc_id") or "")
+                if not did:
+                    return 0
+                if did not in title_cache:
+                    try:
+                        d = get_document(did)
+                        title_cache[did] = (d.get("title") if d else "") or ""
+                    except Exception:
+                        title_cache[did] = ""
+                title = title_cache.get(did, "").lower()
+                return sum(1 for t in name_tokens if t and t in title)
+            hits.sort(key=lambda h: (_boost2(h), _token_score(h), float(h.get("score", 0.0))), reverse=True)
+
     for h in hits:
         doc_id = str(h.get("doc_id"))
         if not doc_id:
@@ -73,16 +131,17 @@ def answer_with_rag(question: str, k: int = 5, *, return_sources: bool = False) 
         # Limita a N extractos por documento
         if per_doc_count.get(doc_id, 0) >= MAX_SNIPPETS_PER_DOC:
             continue
-        meta_title = ""
+        meta_title = title_cache.get(doc_id, "") if title_cache else ""
         meta_tags: list[str] = []
         section = ""
-        try:
-            d = get_document(doc_id)
-            if d:
-                meta_title = str(d.get("title") or "")
-                meta_tags = [str(t).lower() for t in (d.get("tags") or [])]
-        except Exception:
-            pass
+        if not meta_title:
+            try:
+                d = get_document(doc_id)
+                if d:
+                    meta_title = str(d.get("title") or "")
+                    meta_tags = [str(t).lower() for t in (d.get("tags") or [])]
+            except Exception:
+                pass
         try:
             m = h.get("meta") or {}
             section = str(m.get("section") or "")
@@ -124,6 +183,34 @@ def answer_with_rag(question: str, k: int = 5, *, return_sources: bool = False) 
         + ". Si el contexto muestra varias fechas, elige la más próxima posterior a hoy."
         + " Si todas las fechas de una sección ya pasaron, indícalo brevemente y menciona la siguiente programada si existe."
     )
+
+    # Modo de respuesta breve para consultas sobre docentes/perfiles
+    if any(w in q_low for w in ("profe", "profesor", "profesora", "docente")):
+        system_dyn += (
+            " Para preguntas sobre docentes, responde en 1–2 oraciones máximas: "
+            "nombre (si aplica), rol y áreas de especialidad. "
+            "Si hay un correo institucional (dominio 'uabcs.mx'), compártelo al final. "
+            "Evita copiar párrafos largos del contexto y no incluyas notas de fuente."
+        )
+    if any(w in q_low for w in ("quien es", "quién es", "que hace", "qué hace")):
+        system_dyn += (
+            " Responde con un perfil breve: cargo actual (si aparece), departamento o unidad, y 2–4 áreas clave. "
+            "Mantén la salida en una o dos frases claras."
+        )
+    # Si la conversación ya identificó a la persona, evita repetir el nombre completo
+    if continuation_person:
+        system_dyn += (
+            f" En esta conversación ya hablamos de '{continuation_person}'. "
+            "Evita repetir su nombre completo en cada respuesta; usa pronombres (él/ella) o 'el profesor/la profesora' si queda claro."
+        )
+    # Si piden correos explícitamente, regresa solo el correo (o 'No encontrado')
+    if any(w in q_low for w in ("correo", "email", "e-mail")):
+        system_dyn += (
+            " Si la pregunta pide un correo, responde únicamente el correo institucional "
+            "tal como aparezca en el contexto (por ejemplo, usuario@uabcs.mx). "
+            "Si hay varios en el contexto, entrega solo el que corresponda al docente referido en la pregunta. "
+            "Si no es posible determinarlo, indica brevemente que necesitas el nombre completo."
+        )
     if oa:
         resp = oa.chat.completions.create(
             model=settings.openai_model_primary,
@@ -158,3 +245,22 @@ def _suggest_followup(question: str) -> str:
     if "septiembre" in q or "asueto" in q or "clases" in q:
         return "¿Deseas que también te comparta las fechas de exámenes ordinarios?"
     return "¿Quieres que te comparta el documento oficial relacionado?"
+
+
+def _rewrite_query_people(q: str) -> str:
+    s = q or ""
+    low = s.lower()
+    parts = [s]
+    # Si la consulta parece nombre de persona, añade rol académico para sesgar recuperación
+    name_like = len(re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,}", s)) >= 2
+    if name_like and not any(w in low for w in ("profesor", "profesora", "profe", "maestro", "jefe", "doctor", "docente")):
+        parts.append("perfil académico UABCS, profesor, docente, jefe de departamento, doctor")
+    # Rol: jefe de departamento → añade sinónimos comunes
+    if ("jefe" in low and "depart" in low):
+        parts.append("jefe de departamento, jefatura, director de departamento, titular del departamento, responsable del departamento, Departamento Académico")
+    # Departamento DASC → añade nombre largo y sin siglas
+    if "dasc" in low:
+        parts.append("Departamento Académico de Sistemas Computacionales, DASC, Sistemas Computacionales")
+    if any(w in low for w in ("correo", "email", "e-mail", "mail")):
+        parts.append("correo institucional @uabcs.mx")
+    return "; ".join(parts)

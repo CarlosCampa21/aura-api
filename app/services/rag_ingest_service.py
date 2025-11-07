@@ -144,6 +144,17 @@ def ingest_document(doc_id: str) -> Dict[str, int | str]:
         delete_by_doc_id(doc_id)
         return {"chunks": 0, "embeddings": 0, "status": "empty"}
 
+    # Heurística: si un chunk contiene solo (o principalmente) un correo, adjúntalo al chunk previo
+    merged: List[Tuple[str, Optional[str]]] = []
+    email_re = re.compile(r"[\w.\-+]+@\w+[^\s]*", re.IGNORECASE)
+    for c, sec in chunks_with_sections:
+        if merged and email_re.search(c) and not email_re.search(merged[-1][0]):
+            prev_text, prev_sec = merged[-1]
+            merged[-1] = (prev_text.rstrip() + "\n" + c.strip(), prev_sec or sec)
+        else:
+            merged.append((c, sec))
+    chunks_with_sections = merged
+
     # Embeddings por lotes (respetar límites de tokens y tamaño)
     chunk_texts = [c for (c, _sec) in chunks_with_sections]
     vectors = embed_texts(chunk_texts)

@@ -136,7 +136,21 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
 
     # C) Intención académica → casos directos (calendario)
     if _is_calendar_request(question):
-        return _answer_calendar_request(question)
+        return _answer_calendar_request(question, history)
+
+    # C1.5) Desambiguación: nombre suelto sin apellidos → pedir más contexto
+    disamb = _maybe_disambiguate_person(question)
+    if disamb:
+        return {
+            "pregunta": question,
+            "respuesta": disamb,
+            "contexto_usado": False,
+            "came_from": "clarify",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "",
+            "attachments": [],
+        }
 
     # C2) Construye contexto breve
     ctx = build_academic_context(user_email)
@@ -147,9 +161,16 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
         q_eff = _bias_asueto_query(q_eff)
         q_eff = _bias_exam_query(q_eff)
         q_eff = _bias_upcoming_query(q_eff, user_email)
-        rag = answer_with_rag(q_eff, k=10)
+        # Si el turno anterior fue de contacto/correo y el usuario dice
+        # "ahora el de <nombre>", infiere que sigue pidiendo correos
+        q_eff = _infer_followup_attribute(q_eff, history)
+        q_eff = _bias_people_query(q_eff, history)
+        # Si el usuario usa pronombres ("su correo"), agrega la última persona del historial
+        q_eff = _augment_query_with_last_person(q_eff, history)
+        rag = answer_with_rag(q_eff, k=30, continuation_person=_last_person_from_history(history))
         if rag and rag.get("used_context") and rag.get("answer"):
             ans = _clean_text(str(rag.get("answer") or ""))
+            ans = _strip_irrelevant_contact(ans, question)
             return {
                 "pregunta": question,
                 "respuesta": ans,
@@ -169,7 +190,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     if oa_answer and isinstance(oa_answer, dict) and (oa_answer.get("answer") or "").strip():
         return {
             "pregunta": question,
-            "respuesta": _clean_text(oa_answer.get("answer") or ""),
+            "respuesta": _strip_irrelevant_contact(_clean_text(oa_answer.get("answer") or ""), question),
             "contexto_usado": True,
             "came_from": oa_answer.get("origin") or "tool",
             "citation": "",
@@ -184,7 +205,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     if tool_answer:
         return {
             "pregunta": question,
-            "respuesta": _clean_text(tool_answer),
+            "respuesta": _strip_irrelevant_contact(_clean_text(tool_answer), question),
             "contexto_usado": True,
             "came_from": "schedule",
             "citation": "",
@@ -196,6 +217,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
 
     # 4) Último recurso: pipeline LLM clásico (OpenAI→Ollama)
     answer = ask_llm(question, ctx, history=history)
+    answer = _strip_irrelevant_contact(answer, question)
     return {
         "pregunta": question,
         "respuesta": _clean_text(answer),
@@ -262,7 +284,8 @@ _BYE_RE = re.compile(r"\b(ad[ií]os|nos vemos|hasta luego|hasta pronto|bye|me de
 # Palabras que indican intención académica
 _ACAD_HINTS = re.compile(
     r"(calendario|clases|horari|materia|inscripci|reinscripci|extraordinari|ordinari|"
-    r"ex[aá]men|beca|titulaci|convocatoria|semestre|aula|sal[oó]n|docente|profesor|hoy|ma[nñ]ana|fecha|"
+    r"ex[aá]men|beca|titulaci|convocatoria|semestre|aula|sal[oó]n|docente|profesor|profesora|profe|maestro|"
+    r"correo|email|e-?mail|contacto|especiali|área|area|investigaci|perfil|hoy|ma[nñ]ana|fecha|"
     r"cu[aá]ndo|d[oó]nde|c[oó]mo|pdf|asueto|asuetos|feriad|feriados|festiv|festivos|vacacion|vacacional|descanso|"
     r"no\s+hay\s+clases|sin\s+clases)",
     re.IGNORECASE,
@@ -304,14 +327,20 @@ def _social_reply(kind: str, history: list[dict] | None) -> str:
 
 
 def _is_academic_intent(q: str | None) -> bool:
-    return bool(q and _ACAD_HINTS.search(q))
+    if not q:
+        return False
+    if _ACAD_HINTS.search(q):
+        return True
+    # Considera nombres como intención académica (consulta de perfil)
+    return _looks_like_person_name(q)
 
 
 SOCIAL_SYSTEM = (
     "Eres AURA, asistente de la UABCS. Responde saludos y charla casual en español "
     "de forma breve, cordial y profesional (1–2 oraciones). Evita conversación personal "
     "(no preguntes planes del día, estados de ánimo, etc.). Si es posible, orienta a ayuda "
-    "académica de forma natural, sin agregar preguntas de cierre obligatorias."
+    "académica de forma natural. No sugieras consultar sitios web externos; si falta información, "
+    "pide un dato breve para continuar o indica que puedes buscarlo."
 )
 
 
@@ -323,8 +352,8 @@ def _social_llm_reply(prompt: str, history: list[dict] | None) -> str:
                 context="",
                 history=history or [],
                 system=SOCIAL_SYSTEM,
-                temperature=0.8,
-                max_tokens=32,
+                temperature=0.6,
+                max_tokens=64,
             ).strip()
             or "Hola, ¿qué necesitas?"
         )
@@ -368,7 +397,7 @@ def _is_calendar_request(q: str | None) -> bool:
     return bool(q and _CALENDAR_REQ_RE.search(q))
 
 
-def _answer_calendar_request(question: str) -> dict:
+def _answer_calendar_request(question: str, history: list[dict] | None = None) -> dict:
     url = None
     title = "Calendario escolar"
     try:
@@ -403,7 +432,7 @@ def _answer_calendar_request(question: str) -> dict:
             "Resumen breve del calendario escolar 2025: inicio y fin de clases de ambos semestres, "
             "fechas de exámenes ordinarios y extraordinarios. En 3–5 líneas, claro y sin citas."
         )
-        rag = answer_with_rag(q, k=12)
+        rag = answer_with_rag(q, k=30)
         summary = _clean_text(str(rag.get("answer") or ""))
     except Exception:
         summary = ""
@@ -438,6 +467,7 @@ _TOPIC_PATTERNS = {
     "vacaciones": re.compile(r"vacacion|vacacional", re.IGNORECASE),
     "evaluacion": re.compile(r"evaluaci[oó]n\s+docente", re.IGNORECASE),
     "calendario": re.compile(r"calendario|pdf", re.IGNORECASE),
+    "contacto": re.compile(r"\b(correo|email|e-?mail|mail)\b|@[a-z0-9_.-]+", re.IGNORECASE),
 }
 
 _FOLLOWUP_TEMPLATES = {
@@ -531,6 +561,115 @@ def _maybe_contextual_followup(question: str, answer: str, history: list[dict] |
     return _rnd.choice(options)
 
 
+# --- Desambiguación de nombres cortos ---
+_STOP_TOKENS = {
+    "quien", "quién", "que", "qué", "hace", "de", "la", "el", "un", "una", "los", "las",
+    "del", "al", "su", "sus", "es", "soy", "eres", "anda", "hola", "buenas", "buenos",
+}
+
+
+def _maybe_disambiguate_person(q: str | None) -> str | None:
+    s = (q or "").strip()
+    if not s:
+        return None
+    # extrae palabras alfabéticas
+    words = [w.lower() for w in re.findall(r"[a-zA-ZÁÉÍÓÚÑáéíóúñ]+", s)]
+    core = [w for w in words if w not in _STOP_TOKENS]
+    if not core:
+        return None
+    # si solo hay un token significativo (posible nombre sin apellido), pide apellido/rol
+    if len(core) == 1 and len(core[0]) >= 3:
+        name = core[0].capitalize()
+        return (
+            f"¿Te refieres a {name}? Para ayudarte mejor, ¿puedes compartir su apellido y si es profesor, estudiante o administrativo?"
+        )
+    return None
+
+
+def _looks_like_person_name(text: str) -> bool:
+    s = (text or "").strip()
+    if not s:
+        return False
+    toks = re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,}", s)
+    # nombre de 2+ tokens alfabeticos y sin números → probable persona
+    return len(toks) >= 2
+
+
+def _bias_people_query(q: str, history: list[dict] | None) -> str:
+    s = q or ""
+    low = s.lower()
+    if not _looks_like_person_name(s):
+        return s
+    role_words = ("profesor" in low or "profesora" in low or "profe" in low or "maestro" in low or "jefe" in low or "doctor" in low)
+    if role_words:
+        return s
+    # Si el usuario dijo antes "al profesor" u otro rol, úsalo
+    last_user = ""
+    try:
+        for m in reversed(history or []):
+            if str(m.get("role") or "").lower() == "user":
+                last_user = (m.get("content") or "").lower()
+                break
+    except Exception:
+        last_user = ""
+    if any(w in last_user for w in ("profesor", "profesora", "profe", "maestro", "jefe", "doctor")):
+        return f"{s} ({last_user})"
+    # Añade sesgo neutro hacia perfiles académicos de UABCS
+    extra = "perfil académico UABCS, profesor/docente/jefe de departamento/doctor"
+    if "dasc" in low:
+        extra += ", Departamento Académico de Sistemas Computacionales (DASC)"
+    if ("jefe" in low and "depart" in low):
+        extra += ", jefatura/director de departamento"
+    return f"{s} ({extra})"
+
+
+def _last_assistant_text(history: list[dict] | None) -> str:
+    try:
+        if not history:
+            return ""
+        last = next((m for m in reversed(history) if str(m.get("role")).lower() == "assistant"), None)
+        return (last.get("content") or "") if last else ""
+    except Exception:
+        return ""
+
+
+def _last_topic(history: list[dict] | None) -> str | None:
+    txt = _last_assistant_text(history)
+    return _detect_topic("", txt) if txt else None
+
+
+def _infer_followup_attribute(q: str, history: list[dict] | None) -> str:
+    """Si el último tema fue 'contacto' (correo) y el usuario dice
+    'ahora el de <nombre>' o 'el de <nombre>', asume que pide correo.
+    """
+    topic = _last_topic(history)
+    if topic != "contacto":
+        return q
+    s = q or ""
+    low = s.lower()
+    # Si ya menciona correo/email, no tocar
+    if re.search(r"\b(correo|email|e-?mail|mail)\b", low):
+        return q
+    # Patrones de continuación: "ahora el de Teresita", "y el del profe Soto"
+    m = re.search(
+        r"\b(?:ahora|y|tamb[ií]en)?\s*el\s+d[e]l?\s*(profe|profesor(?:a)?|maestro|doctor(?:a)?)?\s*"
+        r"([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,3})\b",
+        s,
+        re.IGNORECASE,
+    )
+    if m:
+        role = (m.group(1) or "").strip().lower()
+        name = m.group(2).strip()
+        role_norm = "profesor" if role in ("", None, "profe", "profesora", "maestra") else role
+        return f"correo del {role_norm} {name}"
+    # Si solo menciona un nombre (1–3 tokens) tras pedir correo antes
+    toks = [t for t in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,}", s) if t.lower() not in {"ahora","el","del","de","la","y","tambien","también","profe","profesor","profesora","maestro","doctor","doctora"}]
+    if 1 <= len(toks) <= 3:
+        name = " ".join(toks)
+        return f"correo del profesor {name.strip()}"
+    return q
+
+
 def _offer_code_for(question: str, answer: str, topic: str | None) -> str | None:
     if not topic:
         return None
@@ -543,6 +682,67 @@ def _offer_code_for(question: str, answer: str, topic: str | None) -> str | None
     if topic == "inicio":
         return "offer_reinscripciones"
     return None
+
+
+# --- Heurística para referencias con pronombres ("su correo") ---
+_NAME_RE = re.compile(r"([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,4})")
+
+def _normalize_name_case(name: str) -> str:
+    try:
+        parts = [p for p in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]+", name) if p]
+        return " ".join(p.capitalize() for p in parts)
+    except Exception:
+        return name
+
+
+def _last_person_from_history(history: list[dict] | None) -> str | None:
+    if not history:
+        return None
+    # Revisa los últimos 6 mensajes (assistant y user) para encontrar el último nombre
+    msgs: list[str] = []
+    try:
+        for m in reversed(history[-6:]):
+            c = str(m.get("content") or "")
+            if c:
+                msgs.append(c)
+    except Exception:
+        pass
+    # 1) Busca patrón con rol + nombre: "profe/maestro/profesor/doctora <nombre>"
+    role_pat = re.compile(r"\b(profe|profesor(?:a)?|maestro|doctor(?:a)?)\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,4})", re.IGNORECASE)
+    for t in msgs:
+        rm = list(role_pat.finditer(t))
+        if rm:
+            name = rm[-1].group(2)
+            return _normalize_name_case(name)
+    # 2) Busca nombre con mayúsculas
+    for t in msgs:
+        m = _NAME_RE.search(t)
+        if m:
+            return _normalize_name_case(m.group(1))
+    # 3) Último token de 1–2 palabras que parezca nombre (en minúsculas), p. ej. "italia"
+    simple_pat = re.compile(r"\b([a-záéíóúñ]{3,}(?:\s+[a-záéíóúñ]{3,}){0,1})\b")
+    for t in msgs:
+        sm = list(simple_pat.finditer(t.lower()))
+        if sm:
+            return _normalize_name_case(sm[-1].group(1))
+    return None
+
+
+def _augment_query_with_last_person(q: str, history: list[dict] | None) -> str:
+    s = q or ""
+    low = s.lower()
+    # Activa cuando hay pronombres referenciales o pregunta de atributo genérico
+    pron = (" su " in f" {low} " or low.startswith("dame su") or low.startswith("su ") or "de él" in low or "de ella" in low)
+    attr = any(w in low for w in ("correo", "email", "e-mail", "contacto", "especiali", "área", "area", "materia", "materias", "que hace", "qué hace", "quien es", "quién es", "perfil"))
+    if not (pron or attr):
+        return s
+    # Si ya hay un nombre explícito en la misma pregunta, no tocar
+    if _looks_like_person_name(s):
+        return s
+    name = _last_person_from_history(history)
+    if not name:
+        return s
+    return f"{s} (del profesor {name})"
 
 
 # --- Utilidades de preprocesamiento temporal y limpieza de citas ---
@@ -610,6 +810,27 @@ def _strip_markdown_styles(text: str) -> str:
 
 def _clean_text(text: str) -> str:
     return _strip_markdown_styles(_strip_citations(text or ""))
+
+
+_CONTACT_RE = re.compile(r"\b(correo|email|e-?mail|mail)\b", re.IGNORECASE)
+
+
+def _strip_irrelevant_contact(ans: str, question: str) -> str:
+    """Si la pregunta no es sobre correo/email, elimina frases sobre correo.
+
+    Evita que, tras cambiar de tema (p. ej., calendario), el modelo arrastre
+    menciones al correo del profesor del turno anterior.
+    """
+    try:
+        if _CONTACT_RE.search(question or ""):
+            return ans
+        # Divide por oraciones simples y filtra las que hablen de correo
+        parts = re.split(r"(?<=[.!?])\s+", ans.strip())
+        parts = [p for p in parts if not _CONTACT_RE.search(p)]
+        out = " ".join(parts).strip()
+        return out or ans
+    except Exception:
+        return ans
 
 
 _NO_CLASSES_HINT = re.compile(r"\b(no\s+hay\s+clases|sin\s+clases|dia\s+sin\s+clases|d[ií]a\s+sin\s+clases)\b", re.IGNORECASE)
