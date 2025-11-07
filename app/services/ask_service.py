@@ -6,6 +6,7 @@ from app.services.schedule_service import try_answer_schedule
 from app.infrastructure.ai.tools.router import answer_with_tools
 import re
 from app.services.rag_search_service import answer_with_rag
+from app.services.easter_eggs import check_easter_egg
 from app.services.library_service import (
     find_schedule_image_for_user,
     find_schedule_image_by_params,
@@ -180,6 +181,15 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 "followup": "",
                 "attachments": [],
             }
+
+    # 0.2) Easter eggs (divertidos, sin RAG ni LLM)
+    try:
+        egg = check_easter_egg(question, history)
+        if egg:
+            return egg
+    except Exception:
+        # No bloquear el flujo si falla algo en eggs
+        pass
 
     # A) Intención social (saludo/agradecimiento/despedida): no activar RAG ni tools
     intent = _detect_social_intent(question)
