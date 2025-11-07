@@ -227,6 +227,41 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "attachments": [sgpp_url],
         }
 
+    # C0-ter-1) "¿Qué son las PP?" → PP = Prácticas Profesionales
+    if _is_practicas_pp_request(question):
+        sgpp_url = "https://sgpp-client.vercel.app/"
+        try:
+            rag = answer_with_rag("¿Qué son las Prácticas Profesionales en el DASC (UABCS)?", k=8)
+            if rag and rag.get("answer"):
+                ans = _clean_text(str(rag.get("answer") or ""))
+                ans = ans.rstrip('.') + f".\nMás información y registro: {sgpp_url}"
+                return {
+                    "pregunta": question,
+                    "respuesta": ans,
+                    "contexto_usado": True,
+                    "came_from": rag.get("came_from") or "rag",
+                    "citation": "",
+                    "source_chunks": rag.get("chunks") or [],
+                    "followup": "",
+                    "attachments": [sgpp_url],
+                }
+        except Exception:
+            pass
+        text = (
+            "PP significa Prácticas Profesionales: actividad curricular que los estudiantes realizan en organizaciones públicas, privadas o sociales para aplicar sus competencias (160 horas, con asesor interno, usualmente en 9º semestre).\n"
+            f"Más información y registro: {sgpp_url}"
+        )
+        return {
+            "pregunta": question,
+            "respuesta": text,
+            "contexto_usado": False,
+            "came_from": "pp-abbrev",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "",
+            "attachments": [sgpp_url],
+        }
+
     # C0-ter-2) Preguntas sobre prácticas + sitio/registro/comenzar → texto breve + link SGPP
     if _is_practices_linkish_request(question) or _is_practices_registration_request(question):
         sgpp_url = "https://sgpp-client.vercel.app/"
@@ -813,7 +848,7 @@ _ACAD_HINTS = re.compile(
     r"ex[aá]men|beca|titulaci|convocatoria|semestre|aula|sal[oó]n|docente|profesor|profesora|profe|maestro|"
     r"correo|email|e-?mail|contacto|especiali|área|area|investigaci|perfil|hoy|ma[nñ]ana|fecha|"
     r"cu[aá]ndo|d[oó]nde|c[oó]mo|pdf|asueto|asuetos|feriad|feriados|festiv|festivos|vacacion|vacacional|descanso|"
-    r"mapa|plano|croquis|campus|pr[aá]ctica|practica|pr[aá]cticas|practicas|sgpp|no\s+hay\s+clases|sin\s+clases)",
+    r"mapa|plano|croquis|campus|pr[aá]ctica|practica|pr[aá]cticas|practicas|\bpp\b|sgpp|no\s+hay\s+clases|sin\s+clases)",
     re.IGNORECASE,
 )
 
@@ -838,8 +873,8 @@ def _is_sgpp_link_request(q: str | None) -> bool:
 
 # --- Prácticas: pedir sitio/link general ---
 _PRACTICES_LINKISH_RE = re.compile(
-    r"\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b.*\b(sitio|p[aá]gina|web|link|enlace|informaci[oó]n|d[oó]nde|donde)\b|"
-    r"\b(sitio|p[aá]gina|web|link|enlace|informaci[oó]n|d[oó]nde|donde)\b.*\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b",
+    r"\b(pr[aá]ctica|practica|pr[aá]cticas|practicas|pp)\b.*\b(sitio|p[aá]gina|web|link|enlace|informaci[oó]n|d[oó]nde|donde)\b|"
+    r"\b(sitio|p[aá]gina|web|link|enlace|informaci[oó]n|d[oó]nde|donde)\b.*\b(pr[aá]ctica|practica|pr[aá]cticas|practicas|pp)\b",
     re.IGNORECASE,
 )
 
@@ -851,7 +886,7 @@ def _is_practices_linkish_request(q: str | None) -> bool:
 
 # --- Prácticas: preguntar cómo registrarse/comenzarlas ---
 _PRACTICES_REGISTER_RE = re.compile(
-    r"\b(registr(ar|o|arme)|inscribir|inscripci[oó]n|comenz(ar|arlas)|inicio|empezar)\b.*\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b|\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b.*\b(registr(ar|o)|inscribir|inscripci[oó]n|comenzar|inicio|empezar)\b",
+    r"\b(registr(ar|o|arme)|inscribir|inscripci[oó]n|comenz(ar|arlas)|inicio|empezar)\b.*\b(pr[aá]ctica|practica|pr[aá]cticas|practicas|pp)\b|\b(pr[aá]ctica|practica|pr[aá]cticas|practicas|pp)\b.*\b(registr(ar|o)|inscribir|inscripci[oó]n|comenzar|inicio|empezar)\b",
     re.IGNORECASE,
 )
 
@@ -859,6 +894,15 @@ _PRACTICES_REGISTER_RE = re.compile(
 def _is_practices_registration_request(q: str | None) -> bool:
     s = (q or "").strip()
     return bool(s and _PRACTICES_REGISTER_RE.search(s))
+
+
+# --- Prácticas: abreviatura "PP" → Prácticas Profesionales
+_PP_ABBREV_RE = re.compile(r"\bpp\b|pr[aá]cticas\s*profesionales\b", re.IGNORECASE)
+
+
+def _is_practicas_pp_request(q: str | None) -> bool:
+    s = (q or "").strip()
+    return bool(s and _PP_ABBREV_RE.search(s) and ("perfil" not in s.lower()))
 
 
 def _detect_social_intent(q: str | None) -> str | None:
