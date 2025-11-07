@@ -86,6 +86,35 @@ def find_calendar_image_url() -> Optional[Dict[str, str]]:
     return None
 
 
+def find_campus_map_image_url() -> Optional[Dict[str, str]]:
+    """Localiza la imagen del mapa del campus en assets.
+
+    Heurística: busca por combinaciones comunes del título/tags como
+    "Mapa del Campus UABCS", "mapa campus uabcs", etc. Prioriza mime_type image/*.
+    Devuelve {title,url} o None si no hay coincidencias.
+    """
+    queries = [
+        "Mapa del Campus UABCS",
+        "mapa campus UABCS",
+        "mapa del campus",
+        "mapa campus",
+        "plano campus UABCS",
+        "croquis campus UABCS",
+    ]
+    try:
+        for q in queries:
+            items = search_assets(q, limit=10)
+            imgs = [
+                i for i in items
+                if (i.get("file_url") and str(i.get("mime_type", "")).lower().startswith("image/"))
+            ]
+            if imgs:
+                return {"title": imgs[0].get("title") or "Mapa del Campus UABCS", "url": imgs[0].get("file_url")}
+    except Exception:
+        return None
+    return None
+
+
 def find_schedule_image_for_user(user_email: str) -> Optional[Dict[str, str]]:
     """Intenta localizar una imagen de horario para el timetable vigente del usuario.
 

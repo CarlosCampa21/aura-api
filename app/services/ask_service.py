@@ -6,7 +6,12 @@ from app.services.schedule_service import try_answer_schedule
 from app.infrastructure.ai.tools.router import answer_with_tools
 import re
 from app.services.rag_search_service import answer_with_rag
-from app.services.library_service import find_schedule_image_for_user, find_schedule_image_by_params, find_schedule_image_by_title
+from app.services.library_service import (
+    find_schedule_image_for_user,
+    find_schedule_image_by_params,
+    find_schedule_image_by_title,
+    find_campus_map_image_url,
+)
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.core.time import get_user_tz
@@ -207,6 +212,67 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     # C) Intención académica → casos directos (calendario)
     if _is_calendar_request(question):
         return _answer_calendar_request(question, history)
+
+    # C0-ter) Petición de enlace del SGPP → devolver solo el link como adjunto
+    if _is_sgpp_link_request(question):
+        sgpp_url = "https://sgpp-client.vercel.app/"
+        return {
+            "pregunta": question,
+            "respuesta": "Enlace al SGPP:",
+            "contexto_usado": False,
+            "came_from": "link",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "",
+            "attachments": [sgpp_url],
+        }
+
+    # C0-ter-2) Preguntas sobre prácticas + sitio/registro/comenzar → texto breve + link SGPP
+    if _is_practices_linkish_request(question) or _is_practices_registration_request(question):
+        sgpp_url = "https://sgpp-client.vercel.app/"
+        text = (
+            "Para más información y para registrarte/iniciar tus prácticas, usa el Sistema Gestor de Prácticas Profesionales (SGPP)."
+            " Ahí podrás consultar requisitos, fechas y completar tu registro."
+        )
+        return {
+            "pregunta": question,
+            "respuesta": text,
+            "contexto_usado": False,
+            "came_from": "link",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "",
+            "attachments": [sgpp_url],
+        }
+
+    # C0-bis) Petición directa del mapa del campus → adjuntar imagen
+    if _is_campus_map_request(question):
+        try:
+            hit = find_campus_map_image_url()
+        except Exception:
+            hit = None
+        if hit and hit.get("url"):
+            return {
+                "pregunta": question,
+                "respuesta": "Aquí está el mapa del campus.",
+                "contexto_usado": True,
+                "came_from": "campus-map",
+                "citation": "",
+                "source_chunks": [],
+                "followup": "",
+                "attachments": [hit.get("url")],
+            }
+        # Fallback si no hay asset disponible
+        return {
+            "pregunta": question,
+            "respuesta": "No encontré la imagen del mapa ahora mismo.",
+            "contexto_usado": False,
+            "came_from": "campus-map-miss",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "¿Quieres que lo busque con otro nombre?",
+            "attachments": [],
+        }
 
     # C1.52) Captura progresiva ANTES de desambiguar nombres: evita que
     # frases como "noveno" caigan en el detector de nombres.
@@ -714,9 +780,51 @@ _ACAD_HINTS = re.compile(
     r"ex[aá]men|beca|titulaci|convocatoria|semestre|aula|sal[oó]n|docente|profesor|profesora|profe|maestro|"
     r"correo|email|e-?mail|contacto|especiali|área|area|investigaci|perfil|hoy|ma[nñ]ana|fecha|"
     r"cu[aá]ndo|d[oó]nde|c[oó]mo|pdf|asueto|asuetos|feriad|feriados|festiv|festivos|vacacion|vacacional|descanso|"
-    r"no\s+hay\s+clases|sin\s+clases)",
+    r"mapa|plano|croquis|campus|pr[aá]ctica|practica|pr[aá]cticas|practicas|sgpp|no\s+hay\s+clases|sin\s+clases)",
     re.IGNORECASE,
 )
+
+# --- Respuesta directa para "mapa del campus" (imagen) ---
+_CAMPUS_MAP_REQ_RE = re.compile(r"\b(?:mapa|plano|croquis|imagen)\b.*\bcampus\b|\bcampus\b.*\b(?:mapa|plano|croquis|imagen)\b", re.IGNORECASE)
+
+
+def _is_campus_map_request(q: str | None) -> bool:
+    s = (q or "").strip()
+    return bool(s and _CAMPUS_MAP_REQ_RE.search(s))
+
+# --- Petición directa de enlace SGPP ---
+_SGPP_LINK_RE = re.compile(
+    r"\b(?:sgpp|gestor\s+de\s+pr[aá]cticas)\b.*\b(?:link|enlace|url)\b|\b(?:link|enlace|url)\b.*\b(?:sgpp|gestor\s+de\s+pr[aá]cticas)\b|^\s*(?:sgpp)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_sgpp_link_request(q: str | None) -> bool:
+    s = (q or "").strip()
+    return bool(s and _SGPP_LINK_RE.search(s))
+
+# --- Prácticas: pedir sitio/link general ---
+_PRACTICES_LINKISH_RE = re.compile(
+    r"\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b.*\b(sitio|p[aá]gina|web|link|enlace|informaci[oó]n|d[oó]nde|donde)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_practices_linkish_request(q: str | None) -> bool:
+    s = (q or "").strip()
+    return bool(s and _PRACTICES_LINKISH_RE.search(s))
+
+
+# --- Prácticas: preguntar cómo registrarse/comenzarlas ---
+_PRACTICES_REGISTER_RE = re.compile(
+    r"\b(registr(ar|o|arme)|inscribir|inscripci[oó]n|comenz(ar|arlas)|inicio|empezar)\b.*\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b|\b(pr[aá]ctica|practica|pr[aá]cticas|practicas)\b.*\b(registr(ar|o)|inscribir|inscripci[oó]n|comenzar|inicio|empezar)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_practices_registration_request(q: str | None) -> bool:
+    s = (q or "").strip()
+    return bool(s and _PRACTICES_REGISTER_RE.search(s))
 
 
 def _detect_social_intent(q: str | None) -> str | None:

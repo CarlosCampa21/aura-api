@@ -238,6 +238,7 @@ def debug_r2():
             "head_bucket_ok": ok,
             "error": err,
         }
+
     except Exception as e:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"No se pudo diagnosticar R2: {e}")
 
