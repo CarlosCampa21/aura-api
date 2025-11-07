@@ -335,6 +335,38 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     except Exception:
         pass
 
+    # C1.45) Preguntas sobre "AURA" (la asistente) → responde directo con RAG/plantilla
+    if _is_about_aura_request(question):
+        try:
+            rag = answer_with_rag("¿Quién es AURA (asistente virtual UABCS)?", k=8)
+            if rag and rag.get("answer"):
+                ans = _clean_text(str(rag.get("answer") or ""))
+                return {
+                    "pregunta": question,
+                    "respuesta": ans,
+                    "contexto_usado": True,
+                    "came_from": rag.get("came_from") or "rag",
+                    "citation": "",
+                    "source_chunks": rag.get("chunks") or [],
+                    "followup": "",
+                    "attachments": _extract_urls(ans),
+                }
+        except Exception:
+            pass
+        fallback = (
+            "AURA es el asistente virtual de la UABCS. Responde dudas sobre vida universitaria, calendarios, horarios, becas y trámites, y comparte enlaces oficiales cuando aplica."
+        )
+        return {
+            "pregunta": question,
+            "respuesta": fallback,
+            "contexto_usado": False,
+            "came_from": "about-aura",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "",
+            "attachments": [],
+        }
+
     # C1.5) Desambiguación: nombre suelto sin apellidos → pedir más contexto
     disamb = _maybe_disambiguate_person(question)
     if disamb:
@@ -1117,6 +1149,9 @@ def _maybe_disambiguate_person(q: str | None) -> str | None:
     core = [w for w in words if w not in _STOP_TOKENS]
     if not core:
         return None
+    # Si el único token es "aura" (la asistente), no desambiguar como persona
+    if len(core) == 1 and core[0] in {"aura"}:
+        return None
     # si solo hay un token significativo (posible nombre sin apellido), pide apellido/rol
     if len(core) == 1 and len(core[0]) >= 3:
         name = core[0].capitalize()
@@ -1133,6 +1168,15 @@ def _looks_like_person_name(text: str) -> bool:
     toks = re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,}", s)
     # nombre de 2+ tokens alfabeticos y sin números → probable persona
     return len(toks) >= 2
+
+
+# --- Detección de intención "sobre AURA" ---
+_ABOUT_AURA_RE = re.compile(r"\b(?:qu[ií]en|qu[eé]|que|qu[eé]\s+es|qui[eé]n\s+es|sobre)\b.*\baura\b|\baura\b.*\b(?:qu[ií]en|qu[eé]|que|sobre)\b", re.IGNORECASE)
+
+
+def _is_about_aura_request(q: str | None) -> bool:
+    s = (q or "").strip()
+    return bool(s and _ABOUT_AURA_RE.search(s))
 
 
 def _bias_people_query(q: str, history: list[dict] | None) -> str:
