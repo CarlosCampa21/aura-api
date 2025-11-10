@@ -345,6 +345,22 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     except Exception:
         pass
 
+    # C0-pre) Enlaces directos institucionales (evita confusiones con "ahora")
+    sm_hit = _match_social_or_site_link(question)
+    if sm_hit:
+        title, url = sm_hit.get("title"), sm_hit.get("url")
+        msg = title or "Enlace solicitado:"
+        return {
+            "pregunta": question,
+            "respuesta": msg,
+            "contexto_usado": False,
+            "came_from": "link",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "",
+            "attachments": [url] if url else [],
+        }
+
     # B) Si no parece intención académica, conversar sin RAG (permite variación y contexto)
     if not _is_academic_intent(question):
         answer = _social_llm_reply(question, history)
@@ -362,6 +378,25 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     # C) Intención académica → casos directos (calendario)
     if _is_calendar_request(question):
         return _answer_calendar_request(question, history)
+
+    # C) Búsqueda directa de documentos/formatos (PDF/Word)
+    if _is_document_request(question):
+        try:
+            from app.services.library_service import search_document_answer
+            txt = search_document_answer(question)
+            if txt:
+                return {
+                    "pregunta": question,
+                    "respuesta": _clean_text(txt),
+                    "contexto_usado": True,
+                    "came_from": "document",
+                    "citation": "",
+                    "source_chunks": [],
+                    "followup": "",
+                    "attachments": _extract_urls(txt),
+                }
+        except Exception:
+            pass
 
     # C0-ter) Petición de enlace del SGPP → devolver solo el link como adjunto
     if _is_sgpp_link_request(question):
@@ -1187,6 +1222,47 @@ def _is_practices_linkish_request(q: str | None) -> bool:
     return bool(s and _PRACTICES_LINKISH_RE.search(s))
 
 
+# --- Links directos a sitios/redes UABCS/DASC/DELE ---
+_SOCIAL_SITE_RE = re.compile(
+    r"\b(instagram|ig|facebook|fb)\b.*\b(uabcs|dasc|dele)\b|"
+    r"\b(uabcs|dasc|dele)\b.*\b(instagram|ig|facebook|fb)\b",
+    re.IGNORECASE,
+)
+_DEPT_SITE_RE = re.compile(
+    r"\b(p[aá]gina|pagina|sitio|web|portal|link|enlace)\b.*\b(dasc|departamento\s+acad[eé]mico\s+de\s+sistemas\s+computacionales)\b|"
+    r"\b(dasc|departamento\s+acad[eé]mico\s+de\s+sistemas\s+computacionales)\b.*\b(p[aá]gina|pagina|sitio|web|portal|link|enlace)\b",
+    re.IGNORECASE,
+)
+
+
+def _match_social_or_site_link(q: str | None) -> dict | None:
+    s = (q or "").strip().lower()
+    if not s:
+        return None
+    # Mapa canónico de enlaces
+    LINKS = {
+        ("instagram", "uabcs"): ("Instagram UABCS", "https://www.instagram.com/uabcsoficial/"),
+        ("facebook", "uabcs"): ("Facebook UABCS", "https://www.facebook.com/UniversidadAutonomadeBajaCaliforniaSur"),
+        ("instagram", "dasc"): ("Instagram del DASC", "https://www.instagram.com/dasc_uabcs/"),
+        ("facebook", "dasc"): ("Facebook del DASC", "https://www.facebook.com/uabcsdsc"),
+        ("instagram", "dele"): ("Instagram del DELE", "https://www.instagram.com/deleuabcslpz/"),
+        ("facebook", "dele"): ("Facebook del DELE", "https://www.facebook.com/DeleUabcsLaPaz"),
+    }
+    # Redes sociales
+    m = _SOCIAL_SITE_RE.search(s)
+    if m:
+        groups = {g.lower() for g in m.groups() if g}
+        platform = "instagram" if any(x in groups for x in {"instagram", "ig"}) else ("facebook" if any(x in groups for x in {"facebook", "fb"}) else None)
+        entity = "uabcs" if "uabcs" in groups else ("dasc" if "dasc" in groups else ("dele" if "dele" in groups else None))
+        if platform and entity and (platform, entity) in LINKS:
+            title, url = LINKS[(platform, entity)]
+            return {"title": title, "url": url}
+    # Sitio/página del DASC
+    if _DEPT_SITE_RE.search(s):
+        return {"title": "Enlace al DASC:", "url": "https://www.uabcs.mx/dasc/"}
+    return None
+
+
 # --- Prácticas: preguntar cómo registrarse/comenzarlas ---
 _PRACTICES_REGISTER_RE = re.compile(
     r"\b(registr(ar|o|arme)|inscribir|inscripci[oó]n|comenz(ar|arlas)|inicio|empezar)\b.*\b(pr[aá]ctica|practica|pr[aá]cticas|practicas|pp)\b|\b(pr[aá]ctica|practica|pr[aá]cticas|practicas|pp)\b.*\b(registr(ar|o)|inscribir|inscripci[oó]n|comenzar|inicio|empezar)\b",
@@ -1311,6 +1387,15 @@ _WANTS_PDF_RE = re.compile(r"\b(pdf|archivo|documento|descargar|desc[aá]rgalo|v
 
 def _is_calendar_request(q: str | None) -> bool:
     return bool(q and _CALENDAR_REQ_RE.search(q))
+
+# --- Detección de solicitud de documento/plantilla ---
+_DOC_REQ_RE = re.compile(
+    r"(?i)\b(formato|plantilla|documento|archivo|pdf|word|docx|doc|carta|solicitud|reporte|informe|constancia)\b"
+)
+
+
+def _is_document_request(q: str | None) -> bool:
+    return bool(q and _DOC_REQ_RE.search(q or ""))
 
 
 def _answer_calendar_request(question: str, history: list[dict] | None = None) -> dict:

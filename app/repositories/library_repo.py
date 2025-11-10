@@ -104,6 +104,21 @@ def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
     return d
 
 
+def update_document_tags(doc_id: str, tags: list[str]) -> bool:
+    """Actualiza `tags` en `library_doc`.
+
+    Normaliza a minúsculas y elimina vacíos. Devuelve True si hubo cambio.
+    """
+    db = get_db()
+    try:
+        oid = ObjectId(doc_id)
+    except Exception:
+        return False
+    norm = [str(t).strip().lower() for t in (tags or []) if str(t).strip()]
+    res = db[COLL].update_one({"_id": oid}, {"$set": {"tags": norm, "updated_at": _now_iso()}})
+    return bool(res.modified_count)
+
+
 def list_active_documents(limit: int = 100, skip: int = 0) -> list[Dict[str, Any]]:
     """Lista documentos activos elegibles para ingesta RAG.
 

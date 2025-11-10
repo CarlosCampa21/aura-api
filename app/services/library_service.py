@@ -14,7 +14,88 @@ from bson import ObjectId
 
 
 def search_document_answer(query: str) -> Optional[str]:
+    """Devuelve un texto breve con el mejor match en biblioteca.
+
+    Prioriza `library_doc`. Si no hay resultados, busca en `library_asset`
+    y acepta PDF y también formatos de Word (doc/docx), que suelen usarse
+    para plantillas y formatos institucionales.
+    """
     items = search_documents(query, limit=3)
+    # Fallback a assets descargables
+    from app.repositories.library_asset_repo import search_assets as _search_assets
+
+    if not items:
+        try:
+            # Construye consultas alternativas robustas a partir de palabras clave
+            import re
+            raw = (query or "").strip()
+            words = [w.lower() for w in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]+", raw)]
+            stop = {"el","la","los","las","de","del","al","un","una","para","por","en","que","me","mi","da","dame","del","finales"}
+            toks = [w for w in words if w not in stop]
+            qs: list[str] = []
+            def add(q: str):
+                q2 = q.strip()
+                if q2 and q2 not in qs:
+                    qs.append(q2)
+
+            add(raw)
+            if "servicio" in toks and "social" in toks:
+                add("servicio social")
+            if "informe" in toks and "final" in toks:
+                add("informe final")
+            if "reporte" in toks and "bimestral" in toks:
+                add("reporte bimestral")
+            if "formato" in toks:
+                add("formato")
+            # Combinaciones sencillas
+            for key in ("informe", "reporte", "formato"):
+                if key in toks:
+                    add(f"{key} servicio social")
+
+            # Ejecuta búsqueda y consolida
+            seen: dict[str, dict] = {}
+            for q in qs:
+                for it in _search_assets(q, limit=10) or []:
+                    seen[str(it.get("id"))] = it
+            aset = list(seen.values())
+            if aset:
+                # Filtra por tipos más útiles para documentos (PDF y Word)
+                def _is_doc(it: dict) -> bool:
+                    mt = str(it.get("mime_type") or "").lower()
+                    return (
+                        mt.endswith("pdf")
+                        or mt in {"application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+                    )
+
+                cand = [a for a in aset if a.get("file_url")]
+                docs = [a for a in cand if _is_doc(a)] or cand
+
+                # Ranking simple por coincidencia de tokens
+                def score(it: dict) -> int:
+                    title = (it.get("title") or "").lower()
+                    tags = " ".join([str(t).lower() for t in (it.get("tags") or [])])
+                    s = 0
+                    for w in toks:
+                        if w in title:
+                            s += 2
+                        if w in tags:
+                            s += 1
+                    return s
+
+                docs = sorted(docs, key=score, reverse=True)
+                if docs:
+                    best = docs[0]
+                    out = [f"Encontré esto: {best.get('title') or 'Documento'}"]
+                    if best.get("file_url"):
+                        out.append(f"Descargar/Ver: {best['file_url']}")
+                    if len(docs) > 1:
+                        alts = ", ".join(i.get("title") or "" for i in docs[1:3])
+                        if alts.strip():
+                            out.append(f"También tengo: {alts}.")
+                    return "\n".join(out)
+        except Exception:
+            return None
+
     if not items:
         return None
     # Formatea una respuesta breve con el mejor match y alternativas
@@ -38,9 +119,18 @@ def find_asset_pdf_url(query: str) -> Optional[Dict[str, str]]:
     items = search_assets(query, limit=5)
     if not items:
         return None
-    # Prioriza elementos con file_url y mime_type PDF
-    pdfs = [i for i in items if i.get("file_url") and str(i.get("mime_type", "")).lower().endswith("pdf")]
-    best = pdfs[0] if pdfs else (items[0] if items and items[0].get("file_url") else None)
+    # Prioriza PDF; si no hay, acepta Word (doc/docx) como fallback
+    def _is_pdf(it: Dict[str, str]) -> bool:
+        return str(it.get("mime_type", "")).lower().endswith("pdf")
+
+    def _is_word(it: Dict[str, str]) -> bool:
+        mt = str(it.get("mime_type", "")).lower()
+        return mt in {"application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+
+    cand = [i for i in items if i.get("file_url")]
+    pdfs = [i for i in cand if _is_pdf(i)]
+    words = [i for i in cand if _is_word(i)]
+    best = pdfs[0] if pdfs else (words[0] if words else (cand[0] if cand else None))
     if not best:
         return None
     return {"title": best.get("title") or "", "url": best.get("file_url")}
@@ -166,6 +256,7 @@ def find_room_image(name: str, building: str | None = None, floor: str | None = 
         # Construye varias consultas robustas (en orden → la primera coincidencia gana)
         toks_base: List[str] = ["salon", nm]
         queries: List[str] = []
+        is_short = len(nm) <= 1  # nombres de un solo carácter (A/B/C)
         # Soporte de áreas no-aula (p. ej., sala de servidores)
         infra_synonyms: List[str] = []
         if nm in {"servidores", "server", "server-room", "server room", "cuarto-servidores", "cuarto de servidores", "sala de servidores", "centro de datos", "redes"}:
@@ -173,21 +264,34 @@ def find_room_image(name: str, building: str | None = None, floor: str | None = 
 
         def add_q(parts: List[str]):
             q = " ".join([p for p in parts if p])
-            if q and q not in queries:
+            if not q:
+                return
+            # Evita consultas excesivamente ambiguas (p. ej., "c")
+            if is_short and q.strip().lower() == nm:
+                return
+            if q not in queries:
                 queries.append(q)
 
         # Con combinaciones progresivas
+        # Preferimos incluir contexto explícito si el nombre es de 1 letra
+        add_q(["laboratorio", nm, b, f, v])
         add_q(toks_base + [b, f, v])
+        add_q(["aula", nm, b, f, v])
+        add_q(["lab", nm, b, f, v])
+        add_q(["laboratorio", nm, b, f])
         add_q(toks_base + [b, f])
-        add_q(toks_base + [b])
-        add_q(toks_base + [f])
         add_q(["aula", nm, b, f])
-        add_q([nm, "salon", b, f])
-        add_q([nm, b])
+        # Combinaciones parciales solo si el nombre no es de 1 letra
+        if not is_short:
+            add_q(toks_base + [b])
+            add_q(toks_base + [f])
+            add_q([nm, "salon", b, f])
+            add_q([nm, b])
 
         # También prueba variantes del nombre en mayúsculas en caso de títulos exactos
         add_q(["salon", nm.upper(), b, f])
         add_q(["aula", nm.upper(), b, f])
+        add_q(["laboratorio", nm.upper(), b, f])
 
         # Para infraestructura: intenta búsquedas sin prefijos salón/aula
         for syn in ([nm] + infra_synonyms):
@@ -200,9 +304,19 @@ def find_room_image(name: str, building: str | None = None, floor: str | None = 
         for q in queries:
             items = search_assets(q, limit=10)
             imgs = [i for i in items if (i.get("file_url") and str(i.get("mime_type", "")).lower().startswith("image/"))]
-            if imgs:
-                top = imgs[0]
-                return {"title": top.get("title") or f"Salón {name.upper()}", "url": top.get("file_url")}
+            if not imgs:
+                continue
+            # Si el nombre es corto, intenta preferir una etiqueta EXACTA (p. ej., "c")
+            if is_short:
+                exact = [i for i in imgs if nm in (i.get("tags") or [])]
+                if exact:
+                    top = exact[0]
+                    return {"title": top.get("title") or f"Salón {name.upper()}", "url": top.get("file_url")}
+                # Si no hay match exacto, sigue probando con próximas consultas
+                continue
+            # Para nombres largos, toma el primer match
+            top = imgs[0]
+            return {"title": top.get("title") or f"Salón {name.upper()}", "url": top.get("file_url")}
         return None
     except Exception:
         return None

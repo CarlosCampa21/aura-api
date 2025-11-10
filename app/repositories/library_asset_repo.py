@@ -92,3 +92,18 @@ def search_assets(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         out.append(item)
     return out
 
+
+def update_asset_tags(asset_id: str, tags: List[str]) -> bool:
+    """Actualiza la lista de `tags` de un asset.
+
+    Normaliza a minúsculas y elimina vacíos. Devuelve True si se modificó
+    algún documento.
+    """
+    db = get_db()
+    try:
+        oid = ObjectId(asset_id)
+    except Exception:
+        return False
+    norm = [str(t).strip().lower() for t in (tags or []) if str(t).strip()]
+    res = db[COLL].update_one({"_id": oid}, {"$set": {"tags": norm, "updated_at": _now_iso()}})
+    return bool(res.modified_count)

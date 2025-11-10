@@ -7,14 +7,15 @@ Permite:
 from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, Body
 from fastapi.responses import RedirectResponse
 
-from app.repositories.library_repo import get_document, insert_document
+from app.repositories.library_repo import get_document, insert_document, update_document_tags
 from app.repositories.library_asset_repo import (
     search_assets,
     get_asset,
     insert_asset,
+    update_asset_tags as repo_update_asset_tags,
 )
 from app.repositories.files_repo_r2 import upload_uploadfile_to_r2
 from app.infrastructure.storage import r2 as r2_storage
@@ -72,6 +73,8 @@ async def _upload_r2_by_type(
         "text/markdown",
         "text/csv",
         "application/csv",
+        # Microsoft Word (legacy .doc)
+        "application/msword",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
@@ -315,6 +318,54 @@ def get_asset_by_id(asset_id: str):
     if not d:
         raise HTTPException(status_code=404, detail="Asset no encontrado")
     return {"asset": d}
+
+
+@router.get("/docs/{doc_id}", response_model=dict, summary="Obtener documento (library_doc)")
+def get_doc_by_id(doc_id: str):
+    d = get_document(doc_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return {"doc": d}
+
+
+@router.patch("/assets/{asset_id}/tags", response_model=dict, summary="Actualizar tags de un asset")
+def update_asset_tags(asset_id: str, payload: dict = Body(..., description="{ tags: [..] }")):
+    try:
+        raw = payload.get("tags") if isinstance(payload, dict) else None
+        if raw is None:
+            raise HTTPException(status_code=422, detail="Body debe incluir 'tags' (lista de strings)")
+        if isinstance(raw, str):
+            tags_list = [p.strip() for p in raw.split(",") if p.strip()]
+        else:
+            tags_list = [str(t).strip() for t in (raw or []) if str(t).strip()]
+        ok = repo_update_asset_tags(asset_id, tags_list)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Asset no encontrado o sin cambios")
+        return {"message": "ok", "id": asset_id, "tags": tags_list}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudieron actualizar las tags: {e}")
+
+
+@router.patch("/docs/{doc_id}/tags", response_model=dict, summary="Actualizar tags de un documento (library_doc)")
+def update_doc_tags(doc_id: str, payload: dict = Body(..., description="{ tags: [..] }")):
+    try:
+        raw = payload.get("tags") if isinstance(payload, dict) else None
+        if raw is None:
+            raise HTTPException(status_code=422, detail="Body debe incluir 'tags' (lista de strings)")
+        if isinstance(raw, str):
+            tags_list = [p.strip() for p in raw.split(",") if p.strip()]
+        else:
+            tags_list = [str(t).strip() for t in (raw or []) if str(t).strip()]
+        ok = update_document_tags(doc_id, tags_list)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Documento no encontrado o sin cambios")
+        return {"message": "ok", "id": doc_id, "tags": tags_list}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudieron actualizar las tags: {e}")
 
 @router.post("/rag/upload", response_model=dict, summary="Subir documento para RAG (R2 → library_doc) en library/rag")
 async def upload_rag_document(
