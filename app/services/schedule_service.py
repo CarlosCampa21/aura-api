@@ -236,17 +236,44 @@ def next_class(email: str, ref: Optional[datetime] = None) -> Optional[Dict[str,
 
 def try_answer_schedule(email: str, question: str) -> Optional[str]:
     """
-    Si la pregunta es del tipo horario, devuelve una respuesta lista para el usuario.
-    En otro caso, devuelve None y deja que el LLM responda.
+    Si la intención es de horario, responde determinísticamente.
+    Si NO lo es, devuelve None para que otro flujo (RAG/LLM) responda.
     """
     q = (question or "").strip().lower()
     if not q:
         return None
 
-    # Verifica perfil mínimo
+    # 1) Detección estricta de intención de horario antes de pedir datos.
+    #    Evita que consultas ajenas ("kardex", "correo", etc.) caigan aquí.
+    day_words = set(SPANISH_DAY_TO_CODE.keys())
+    schedule_hints = [
+        "horario",
+        "clase me toca",
+        "que clase me toca",
+        "qué clase me toca",
+        "que me toca",
+        "qué me toca",
+        "siguiente clase",
+        "proxima clase",
+        "próxima clase",
+        "clases tengo",
+        "que clases tengo",
+        "qué clases tengo",
+        "materias tengo",
+    ]
+    is_schedule_intent = any(h in q for h in schedule_hints)
+    if not is_schedule_intent:
+        # Si menciona un día, requiere además una pista de clases/materias/horario
+        mentions_day = any(dw in q for dw in day_words)
+        if mentions_day and any(w in q for w in ["clase", "clases", "materia", "materias", "horario", "toca"]):
+            is_schedule_intent = True
+
+    if not is_schedule_intent:
+        return None
+
+    # 2) Con intención confirmada, ahora sí validar perfil.
     prof = _get_user_profile(email) or {}
     missing: list[str] = []
-    # Ya no pedimos nombre para responder el horario
     if not (prof.get("major")):
         missing.append("carrera")
     if not (prof.get("shift")):

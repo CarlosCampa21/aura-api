@@ -227,7 +227,10 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             return _extract_program_code(t) is not None
 
         assistant_asked_any = any(w in last_assistant for w in ["carrera", "semestre", "turno"])
-        if assistant_asked_any or _looks_like_param_token(question) or ("horario" in (question or "").lower()):
+        qlow = (question or "").lower()
+        # Dispara este bloque sólo si el usuario pide explícitamente "horario"
+        # o si está respondiendo con tokens de parámetros después de que se lo pedimos.
+        if ("horario" in qlow) or (assistant_asked_any and _looks_like_param_token(question)):
             # Reúne los últimos mensajes del usuario para extraer parámetros
             user_texts: list[str] = [question or ""]
             if history:
