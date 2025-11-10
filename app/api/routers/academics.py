@@ -6,6 +6,7 @@ from app.api.schemas.academics import (
     TimetableOut,
     TimetableEntryCreate,
     TimetableEntryOut,
+    TimetableImportRequest,
 )
 from app.services.academics_service import (
     insert_timetable,
@@ -22,6 +23,7 @@ from app.services.academics_service import (
     insert_course,
     list_courses,
 )
+from app.infrastructure.db.mongo import get_db
 from app.api.schemas.academics import (
     DepartmentCreate,
     DepartmentOut,
@@ -144,6 +146,75 @@ def get_entries(timetable_id: str = Query(...)):
         return {"entries": items}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudieron listar las entradas del horario: {e}")
+
+
+@router.post(
+    "/timetables/import",
+    status_code=status.HTTP_201_CREATED,
+    response_model=dict,
+    summary="Crear/actualizar timetable con entries (todo en uno)",
+    description="Crea o reutiliza el timetable por combinación y reemplaza sus entries. Opcionalmente publica y asegura catálogos.",
+)
+def import_timetable(payload: TimetableImportRequest):
+    try:
+        db = get_db()
+        # Asegura catálogos si aplica
+        if payload.ensure_catalogs:
+            if not db["department"].find_one({"code": payload.department_code}):
+                insert_department({"code": payload.department_code, "name": payload.department_code})
+            if not db["program"].find_one({"department_code": payload.department_code, "code": payload.program_code}):
+                insert_program({"department_code": payload.department_code, "code": payload.program_code, "name": payload.program_code})
+            if not db["period"].find_one({"code": payload.period_code}):
+                insert_period({"code": payload.period_code, "year": 0, "term": payload.period_code, "status": "active"})
+
+        existing = db["timetable"].find_one({
+            "department_code": payload.department_code,
+            "program_code": payload.program_code,
+            "semester": payload.semester,
+            "group": payload.group,
+            "period_code": payload.period_code,
+            **({"shift": payload.shift} if payload.shift else {}),
+        })
+        if existing:
+            tid = str(existing["_id"])
+        else:
+            tid = insert_timetable({
+                "department_code": payload.department_code,
+                "program_code": payload.program_code,
+                "semester": payload.semester,
+                "group": payload.group,
+                "period_code": payload.period_code,
+                "shift": payload.shift,
+                "title": payload.title,
+            })
+
+        if payload.replace_entries:
+            db["timetable_entry"].delete_many({"timetable_id": tid})
+
+        # Normaliza entries
+        items: list[dict] = []
+        for e in payload.entries:
+            d = TimetableEntryCreate(
+                timetable_id=tid,
+                day=e.day,
+                start_time=e.start_time,
+                end_time=e.end_time,
+                course_name=e.course_name,
+                instructor=e.instructor,
+                room_code=e.room_code,
+                modality=e.modality,
+                module=e.module,
+                notes=e.notes,
+            ).model_dump(mode="json")
+            items.append(d)
+        n = insert_entries_bulk(tid, items)
+
+        if payload.publish:
+            publish_timetable(tid)
+
+        return {"message": "ok", "timetable_id": tid, "entries_inserted": n, "published": bool(payload.publish)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo importar el horario: {e}")
 
 
 # ---- Catálogos ----

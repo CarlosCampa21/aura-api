@@ -140,3 +140,37 @@ class TimetableEntryOut(BaseModel):
     notes: Optional[str] = None
     created_at: str
     updated_at: str
+
+
+# ---- Import/Upsert combinado ----
+class TimetableImportEntry(BaseModel):
+    day: Day
+    start_time: str
+    end_time: str
+    course_name: str
+    instructor: Optional[str] = None
+    room_code: Optional[str] = None
+    modality: Literal["class", "lab", "seminar", "other"] = "class"
+    module: Optional[str] = None
+    notes: Optional[str] = None
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _validate_time2(cls, v: str) -> str:
+        if len(v) == 5 and v[2] == ":" and v[:2].isdigit() and v[3:].isdigit():
+            return v
+        raise ValueError("time must be HH:MM")
+
+
+class TimetableImportRequest(BaseModel):
+    department_code: str = Field(default="DASC")
+    program_code: str
+    semester: int
+    group: str = Field(default="A")
+    period_code: str
+    shift: Optional[Literal["TM", "TV"]] = None
+    title: Optional[str] = None
+    ensure_catalogs: bool = True
+    publish: bool = True
+    replace_entries: bool = True
+    entries: List[TimetableImportEntry]

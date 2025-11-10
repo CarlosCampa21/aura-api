@@ -258,7 +258,7 @@ def try_answer_schedule(email: str, question: str) -> Optional[str]:
         return (
             "Para responder con tu horario necesito tu "
             + ", ".join(missing)
-            + ". Puedes decírmelos y, si deseas, los guardo en tu perfil."
+            + ". Puedes decírmelos aquí (no se guardarán en tu perfil)."
         )
 
     intents = {

@@ -239,12 +239,31 @@ def find_schedule_image_for_user(user_email: str) -> Optional[Dict[str, str]]:
             pass
 
         # 1) Construye múltiples consultas robustas
-        queries = [
-            " ".join([p for p in ["horario", program, sem, shift, period] if p]),
-            " ".join([p for p in ["horario", program, sem, shift] if p]),
-            " ".join([p for p in ["horario", program, sem] if p]),
-            (tt.get("title") or ""),
-        ]
+        # Normaliza y amplía sinónimos de turno (TM<->MT, TV<->VT)
+        def shift_aliases(s: str) -> List[str]:
+            s = (s or "").upper()
+            if s == "TM":
+                return ["TM", "MT", "MATUTINO", "MAÑANA", "MANANA"]
+            if s == "TV":
+                # incluir alias usados en títulos: VP (vespertino)
+                return ["TV", "VT", "VP", "VESPERTINO", "TARDE"]
+            return [s] if s else []
+
+        aliases = shift_aliases(shift)
+        queries: List[str] = []
+        for sh in aliases or [""]:
+            base1 = " ".join([p for p in [program, sem, sh, period] if p])
+            base2 = " ".join([p for p in [program, sem, sh] if p])
+            queries.extend([
+                " ".join([p for p in ["horario", base1] if p]),
+                " ".join([p for p in ["horario", base2] if p]),
+                base1,
+                base2,
+                # variantes con la palabra 'imagen' al frente (para títulos tipo Imagen_Horario...)
+                " ".join([p for p in ["imagen", "horario", base1] if p]),
+                " ".join([p for p in ["imagen", "horario", base2] if p]),
+            ])
+        queries.append(tt.get("title") or "")
         # 2) Intenta primero imágenes explícitas
         for q in queries + [q + " imagen" for q in queries]:
             if not q.strip():
@@ -268,7 +287,7 @@ def find_schedule_image_for_user(user_email: str) -> Optional[Dict[str, str]]:
         return None
 
 
-def find_schedule_image_by_params(program: str, semester: int | str, shift: str | None, period: str | None = None) -> Optional[Dict[str, str]]:
+def find_schedule_image_by_params(program: str, semester: int | str, shift: str | None, period: str | None = None, group: str | None = None) -> Optional[Dict[str, str]]:
     """Localiza una imagen de horario usando parámetros explícitos.
 
     Busca en `library_asset` por título/tags. Prioriza mime_type image/*.
@@ -277,12 +296,36 @@ def find_schedule_image_by_params(program: str, semester: int | str, shift: str 
         prog = (program or "").upper()
         sem = str(semester or "").strip()
         sh = (shift or "").upper().strip()
+        grp = (group or "").strip().upper()
         per = str(period or "").strip()
-        q = " ".join([p for p in ["horario", prog, sem, sh, per] if p])
-        items = search_assets(q, limit=10)
-        imgs = [i for i in items if (i.get("file_url") and str(i.get("mime_type","" )).lower().startswith("image/"))]
-        if imgs:
-            return {"title": imgs[0].get("title") or "", "url": imgs[0].get("file_url")}
+
+        def shift_aliases(s: str) -> List[str]:
+            s = (s or "").upper()
+            if s == "TM":
+                return ["TM", "MT", "MATUTINO", "MAÑANA", "MANANA"]
+            if s == "TV":
+                return ["TV", "VT", "VP", "VESPERTINO", "TARDE"]
+            return [s] if s else []
+
+        queries: List[str] = []
+        for sh_alias in shift_aliases(sh) or [""]:
+            base_parts = [prog, sem, sh_alias, per]
+            if grp:
+                base_parts.append(f"GRUPO {grp}")
+            base = " ".join([p for p in base_parts if p])
+            queries.extend([
+                " ".join([p for p in ["horario", base] if p]),
+                base,
+                # variantes con 'imagen horario' al frente
+                " ".join([p for p in ["imagen", "horario", base] if p]),
+            ])
+        for q in queries:
+            if not q.strip():
+                continue
+            items = search_assets(q, limit=10)
+            imgs = [i for i in items if (i.get("file_url") and str(i.get("mime_type","" )).lower().startswith("image/"))]
+            if imgs:
+                return {"title": imgs[0].get("title") or "", "url": imgs[0].get("file_url")}
         return None
     except Exception:
         return None
@@ -294,12 +337,52 @@ def find_schedule_image_by_title(title: str) -> Optional[Dict[str, str]]:
     Útil cuando el turno previo ya mostró el horario en texto con "Horario vigente: <title>".
     """
     try:
-        q = (title or "").strip()
-        if not q:
+        raw = (title or "").strip()
+        if not raw:
             return None
-        # 1) doc_ref preferente
+
+        # 0) Intentar parsear parámetros (programa/semestre/turno/periodo/grupo) desde el título
+        #    Ej.: "IDS 7 TM Grupo A 2025-II" → IDS, 7, TM, 2025-II
+        import re
+        prog = None
+        sem = None
+        shift = None
+        period = None
+        group = None
+        # Programa: primer token alfabético de 2-8 letras
+        m_prog = re.search(r"\b([A-Za-z]{2,8})\b", raw)
+        if m_prog:
+            prog = m_prog.group(1).upper()
+        # Semestre: primer número 1-12
+        m_sem = re.search(r"\b(\d{1,2})\b", raw)
+        if m_sem:
+            try:
+                sem = int(m_sem.group(1))
+            except Exception:
+                sem = None
+        # Turno: TM/TV o palabras
+        s_low = raw.lower()
+        if any(w in s_low for w in ["tm", "mt", "matutino", "mañana", "manana"]):
+            shift = "TM"
+        elif any(w in s_low for w in ["tv", "vt", "vp", "vespertino", "tarde"]):
+            shift = "TV"
+        # Grupo: 'Grupo A' o 'Grupo B'
+        m_grp = re.search(r"\bgrupo\s*([ab])\b", raw, re.IGNORECASE)
+        if m_grp:
+            group = m_grp.group(1).upper()
+        # Periodo: algo tipo 2025-II o 2025 II
+        m_per = re.search(r"\b(20\d{2})\s*-?\s*([ivx]+)\b", raw, re.IGNORECASE)
+        if m_per:
+            period = f"{m_per.group(1)}-{m_per.group(2).upper()}"
+
+        if prog and sem and shift:
+            hit = find_schedule_image_by_params(prog, sem, shift, period, group)
+            if hit:
+                return hit
+
+        # 1) doc_ref preferente con el título completo
         try:
-            docs = search_documents(q, limit=1)
+            docs = search_documents(raw, limit=1)
             if docs:
                 did = docs[0].get("id")
                 if did:
@@ -307,14 +390,29 @@ def find_schedule_image_by_title(title: str) -> Optional[Dict[str, str]]:
                     rows = list(db["library_asset"].find({"doc_ref": ObjectId(did), "enabled": True}))
                     imgs = [r for r in rows if str(r.get("mime_type","" )).lower().startswith("image/") and r.get("url")]
                     if imgs:
-                        return {"title": imgs[0].get("title") or q, "url": imgs[0].get("url")}
+                        return {"title": imgs[0].get("title") or raw, "url": imgs[0].get("url")}
         except Exception:
             pass
-        # 2) búsqueda directa en assets por título
-        items = search_assets(q, limit=10)
-        imgs = [i for i in items if (i.get("file_url") and str(i.get("mime_type","" )).lower().startswith("image/"))]
-        if imgs:
-            return {"title": imgs[0].get("title") or q, "url": imgs[0].get("file_url")}
+
+        # 2) Variantes del título para aumentar recall: sin "Grupo X" y con prefijo "horario"
+        variants = [raw]
+        # También probamos forzando 'Grupo A/B' si existía
+        if group:
+            variants.append(raw)
+        # y una versión sin el fragmento de grupo
+        variants.append(re.sub(r"\bGrupo\s+[A-Za-z0-9]+\b", "", raw, flags=re.IGNORECASE).strip())
+        for v in list(variants):
+            if not v.lower().startswith("horario"):
+                variants.append("Horario " + v)
+
+        # 3) Búsqueda directa en assets por cada variante
+        for q in variants:
+            if not q:
+                continue
+            items = search_assets(q, limit=10)
+            imgs = [i for i in items if (i.get("file_url") and str(i.get("mime_type","" )).lower().startswith("image/"))]
+            if imgs:
+                return {"title": imgs[0].get("title") or q, "url": imgs[0].get("file_url")}
         return None
     except Exception:
         return None

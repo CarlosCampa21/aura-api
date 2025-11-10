@@ -206,6 +206,141 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "attachments": [],
         }
 
+    # B0) Seguimiento robusto: acumula carrera/semestre/turno a partir de mensajes recientes
+    # Se ejecuta ANTES del filtro de intención para aceptar entradas como "IDS", "7", "TV".
+    try:
+        last_assistant = ""
+        if history:
+            for m in reversed(history):
+                if str(m.get("role")).lower() == "assistant":
+                    last_assistant = (m.get("content") or "").lower()
+                    break
+        def _looks_like_param_token(s: str) -> bool:
+            t = (s or "").strip().lower()
+            if not t:
+                return False
+            if t in {"tm","tv","mt","vt","mañana","manana","tarde","matutino","vespertino"}:
+                return True
+            import re
+            if re.fullmatch(r"\d{1,2}", t):
+                return True
+            return _extract_program_code(t) is not None
+
+        assistant_asked_any = any(w in last_assistant for w in ["carrera", "semestre", "turno"])
+        if assistant_asked_any or _looks_like_param_token(question) or ("horario" in (question or "").lower()):
+            # Reúne los últimos mensajes del usuario para extraer parámetros
+            user_texts: list[str] = [question or ""]
+            if history:
+                count = 0
+                for m in reversed(history):
+                    if str(m.get("role")).lower() != "user":
+                        continue
+                    user_texts.append(m.get("content") or "")
+                    count += 1
+                    if count >= 8:
+                        break
+            s_all = " ".join(reversed(user_texts)).lower()
+            import re
+            # Toma la carrera del agregado o, si no aparece, de la última frase del asistente
+            prog = _extract_program_code(s_all) or _extract_program_code(last_assistant)
+            # Semestre: número o palabra
+            words_to_num = {
+                "primero":1,"segundo":2,"tercero":3,"cuarto":4,"quinto":5,"sexto":6,
+                "septimo":7,"séptimo":7,"octavo":8,"noveno":9,"décimo":10,"decimo":10,
+                "once":11,"onceavo":11,"undécimo":11,"doce":12,"doceavo":12,"duodécimo":12,
+            }
+            sem = None
+            mnum = re.search(r"\b(\d{1,2})\b", s_all)
+            if mnum:
+                try:
+                    n = int(mnum.group(1))
+                    if 1 <= n <= 12:
+                        sem = n
+                except Exception:
+                    sem = None
+            if sem is None:
+                for w, n in words_to_num.items():
+                    if w in s_all:
+                        sem = n; break
+            # Turno
+            shift = None
+            if any(w in s_all for w in ["matutino", "tm", "mt", "mañana", "manana"]):
+                shift = "TM"
+            elif any(w in s_all for w in ["vespertino", "tv", "vt", "vp", "tarde"]):
+                shift = "TV"
+            # Grupo (A/B) solo relevante para sem 1 y 3 turno TM
+            group = None
+            mgrp = re.search(r"\bgrupo\s*([ab])\b", s_all)
+            if mgrp:
+                group = mgrp.group(1).upper()
+            elif sem in {1,3}:
+                m2 = re.search(r"\b(?:1|3)\s*([ab])\b", s_all)
+                if m2:
+                    group = m2.group(1).upper()
+
+            # Si es 1º o 3º en TM y no hay grupo, pedirlo primero
+            if prog and sem in {1,3} and shift == "TM" and not group:
+                return {
+                    "pregunta": question,
+                    "respuesta": "Para TM en semestres 1 y 3 hay grupos A y B. ¿Cuál es tu grupo? (A o B)",
+                    "contexto_usado": False,
+                    "came_from": "ask-group-needed",
+                    "citation": "",
+                    "source_chunks": [],
+                    "followup": "",
+                    "attachments": [],
+                }
+
+            if prog and sem and shift:
+                hit = find_schedule_image_by_params(prog, sem, shift, group=group)
+                if hit and hit.get("url"):
+                    return {
+                        "pregunta": question,
+                        "respuesta": "Aquí tienes el horario.",
+                        "contexto_usado": True,
+                        "came_from": "asset-schedule-params",
+                        "citation": "",
+                        "source_chunks": [],
+                        "followup": "",
+                        "attachments": [hit.get("url")],
+                    }
+                from app.services.schedule_service import schedule_text_by_params
+                txt = schedule_text_by_params(prog, sem, shift, group=group)
+                if txt:
+                    return {
+                        "pregunta": question,
+                        "respuesta": txt,
+                        "contexto_usado": True,
+                        "came_from": "schedule-by-params",
+                        "citation": "",
+                        "source_chunks": [],
+                        "followup": "",
+                        "attachments": [],
+                    }
+            # Pide solo lo que falte
+            needs: list[str] = []
+            if not prog:
+                needs.append("carrera (ej. IDS)")
+            if not sem:
+                needs.append("semestre (1–12)")
+            if not shift:
+                needs.append("turno (TM o TV)")
+            if sem in {1,3} and shift == "TM" and "grupo" not in needs:
+                needs.append("grupo (A o B)")
+            if needs:
+                return {
+                    "pregunta": question,
+                    "respuesta": "¿Podrías decirme " + " y ".join(needs) + "?",
+                    "contexto_usado": False,
+                    "came_from": "ask-schedule-need-more",
+                    "citation": "",
+                    "source_chunks": [],
+                    "followup": "",
+                    "attachments": [],
+                }
+    except Exception:
+        pass
+
     # B) Si no parece intención académica, conversar sin RAG (permite variación y contexto)
     if not _is_academic_intent(question):
         answer = _social_llm_reply(question, history)
@@ -396,8 +531,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 m = re.search(r"(?i)semestre\s*[:=]?\s*(\d{1,2})\b", s)
                 words_to_num = {
                     "primero":1,"segundo":2,"tercero":3,"cuarto":4,"quinto":5,"sexto":6,
-                    "septimo":7,"séptimo":7,"octavo":8,"noveno":9,"décimo":10,"decimo":10,
-                    "once":11,"onceavo":11,"undécimo":11,"doce":12,"doceavo":12,"duodécimo":12,
+                    "septimo":7,"séptimo":7,"octavo":8,"noveno":9,
                 }
                 if m:
                     payload["semester"] = int(m.group(1))
@@ -405,20 +539,8 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                     for w, n in words_to_num.items():
                         if re.search(rf"(?i)\b{w}\b", s):
                             payload["semester"] = n; break
-                if payload:
-                    try:
-                        from app.services import profile_service
-                        from app.infrastructure.db.mongo import get_db as _get_db
-                        db = _get_db()
-                        u = db["user"].find_one({"email": user_email.lower()})
-                        if u:
-                            newp = profile_service.update_my_profile(str(u["_id"]), payload)
-                            missing = _missing_ordered(newp)
-                            if missing:
-                                return {"pregunta": question, "respuesta": "Gracias. Guardé lo que me diste. " + _prompt_for(missing[0]), "contexto_usado": False, "came_from": "profile-partial", "citation": "", "source_chunks": [], "followup": "", "attachments": [], "offer_code": None}
-                            return {"pregunta": question, "respuesta": "Gracias. Tu perfil ha quedado completo.", "contexto_usado": False, "came_from": "profile-complete", "citation": "", "source_chunks": [], "followup": "", "attachments": [], "offer_code": "profile_updated"}
-                    except Exception:
-                        pass
+                # Registro de perfil por chat desactivado: ignorar autocaptura
+                pass
     except Exception:
         pass
 
@@ -508,8 +630,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 m = re.search(r"(?i)semestre\s*[:=]?\s*(\d{1,2})\b", s)
                 words_to_num = {
                     "primero":1,"segundo":2,"tercero":3,"cuarto":4,"quinto":5,"sexto":6,
-                    "septimo":7,"séptimo":7,"octavo":8,"noveno":9,"décimo":10,"decimo":10,
-                    "once":11,"onceavo":11,"undécimo":11,"doce":12,"doceavo":12,"duodécimo":12,
+                    "septimo":7,"séptimo":7,"octavo":8,"noveno":9,
                 }
                 if m:
                     payload["semester"] = int(m.group(1))
@@ -517,53 +638,8 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                     for w, n in words_to_num.items():
                         if re.search(rf"(?i)\b{w}\b", s):
                             payload["semester"] = n; break
-                # Si hay algo que guardar
-                if payload:
-                    try:
-                        from app.infrastructure.db.mongo import get_db
-                        from app.services import profile_service
-                        db = get_db()
-                        u = db["user"].find_one({"email": user_email.lower()})
-                        if u:
-                            newp = profile_service.update_my_profile(str(u["_id"]), payload)
-                            # Calcula faltantes
-                            missing = []
-                            for k in ("full_name","major","shift","semester"):
-                                if not newp.get(k):
-                                    missing.append(k)
-                            if missing:
-                                pretty = {
-                                    "full_name":"nombre completo",
-                                    "major":"carrera",
-                                    "shift":"turno",
-                                    "semester":"semestre",
-                                }
-                                need = ", ".join(pretty.get(k,k) for k in missing)
-                                return {
-                                    "pregunta": question,
-                                    "respuesta": f"Gracias. Guardé lo que me diste. Aún me falta: {need}. ¿Me compartes esos datos?",
-                                    "contexto_usado": False,
-                                    "came_from": "profile-partial",
-                                    "citation": "",
-                                    "source_chunks": [],
-                                    "followup": "",
-                                    "attachments": [],
-                                    "offer_code": None,
-                                }
-                            # Completo
-                            return {
-                                "pregunta": question,
-                                "respuesta": "Gracias. Tu perfil ha quedado completo.",
-                                "contexto_usado": False,
-                                "came_from": "profile-complete",
-                                "citation": "",
-                                "source_chunks": [],
-                                "followup": "",
-                                "attachments": [],
-                                "offer_code": "profile_updated",
-                            }
-                    except Exception:
-                        pass
+                # Registro de perfil por chat desactivado: ignorar autocaptura
+                pass
     except Exception:
         pass
 
@@ -576,7 +652,10 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 if str(m.get("role")).lower() == "assistant":
                     last_assistant = (m.get("content") or "").lower()
                     break
-        asked_schedule_details = ("carrera, semestre y turno" in last_assistant) or ("¿de qué carrera" in last_assistant)
+        asked_schedule_details = (
+            ("horario" in last_assistant)
+            and any(w in last_assistant for w in ["carrera", "semestre", "turno"])
+        )
         if asked_schedule_details:
             s = (question or "").lower()
             # Programa (código) validado contra catálogos (evita capturar 'mi')
@@ -598,13 +677,35 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                         sem = n; break
             # Turno
             shift = None
-            if any(w in s for w in ["matutino", "tm", "mañana", "manana"]):
+            if any(w in s for w in ["matutino", "tm", "mt", "mañana", "manana"]):
                 shift = "TM"
-            elif any(w in s for w in ["vespertino", "tv", "tarde"]):
+            elif any(w in s for w in ["vespertino", "tv", "vt", "vp", "tarde"]):
                 shift = "TV"
+            # Grupo (A/B) cuando aplica
+            group = None
+            mg = re.search(r"\bgrupo\s*([ab])\b", s)
+            if mg:
+                group = mg.group(1).upper()
+            elif sem in {1,3}:
+                mg2 = re.search(r"\b(?:1|3)\s*([ab])\b", s)
+                if mg2:
+                    group = mg2.group(1).upper()
+            # Si es 1º/3º TM y sin grupo, pedirlo
+            if prog and sem in {1,3} and shift == "TM" and not group:
+                return {
+                    "pregunta": question,
+                    "respuesta": "Para TM en semestres 1 y 3 hay grupos A y B. ¿Cuál es tu grupo? (A o B)",
+                    "contexto_usado": False,
+                    "came_from": "ask-group-needed",
+                    "citation": "",
+                    "source_chunks": [],
+                    "followup": "",
+                    "attachments": [],
+                }
+
             if prog and sem and shift:
                 # 1) Intenta imagen
-                hit = find_schedule_image_by_params(prog, sem, shift)
+                hit = find_schedule_image_by_params(prog, sem, shift, group=group)
                 if hit and hit.get("url"):
                     return {
                         "pregunta": question,
@@ -618,13 +719,127 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                     }
                 # 2) Fallback: construir horario en texto por parámetros (sin perfil)
                 from app.services.schedule_service import schedule_text_by_params
-                txt = schedule_text_by_params(prog, sem, shift)
+                txt = schedule_text_by_params(prog, sem, shift, group=group)
                 if txt:
                     return {
                         "pregunta": question,
                         "respuesta": txt,
                         "contexto_usado": True,
                         "came_from": "schedule-by-params",
+                        "citation": "",
+                        "source_chunks": [],
+                        "followup": "",
+                        "attachments": [],
+                    }
+    except Exception:
+        pass
+
+    # C1.65) Petición directa de horario con parámetros en la misma frase
+    # Ej.: "dame el horario IDS 7 TM" o "horario de IDS 7 TV"
+    try:
+        qlow = (question or "").lower()
+        if "horario" in qlow:
+            prog = _extract_program_code(qlow)
+            if not prog:
+                # intenta recuperar la carrera desde la última indicación del asistente
+                try:
+                    last_assistant = ""
+                    if history:
+                        for m in reversed(history):
+                            if str(m.get("role")).lower() == "assistant":
+                                last_assistant = (m.get("content") or "").lower()
+                                break
+                    prog = _extract_program_code(last_assistant) or prog
+                except Exception:
+                    pass
+            if not prog and history:
+                # busca en varios mensajes recientes de usuario/assistant
+                for m in reversed(history):
+                    cand = _extract_program_code(m.get("content") or "")
+                    if cand:
+                        prog = cand
+                        break
+            import re
+            sem = None
+            m = re.search(r"\b(\d{1,2})\b", qlow)
+            if m:
+                sem = int(m.group(1))
+            else:
+                words_to_num = {"primero":1,"segundo":2,"tercero":3,"cuarto":4,"quinto":5,"sexto":6,
+                                "septimo":7,"séptimo":7,"octavo":8,"noveno":9,
+                                }
+                for w, n in words_to_num.items():
+                    if w in qlow:
+                        sem = n; break
+            shift = None
+            if any(w in qlow for w in ["matutino", "tm", "mt", "mañana", "manana"]):
+                shift = "TM"
+            elif any(w in qlow for w in ["vespertino", "tv", "vt", "vp", "tarde"]):
+                shift = "TV"
+            # Grupo (A/B) para 1º/3º TM
+            group = None
+            mg = re.search(r"\bgrupo\s*([ab])\b", qlow)
+            if mg:
+                group = mg.group(1).upper()
+            elif sem in {1,3}:
+                m2 = re.search(r"\b(?:1|3)\s*([ab])\b", qlow)
+                if m2:
+                    group = m2.group(1).upper()
+            if prog and sem in {1,3} and shift == "TM" and not group:
+                return {
+                    "pregunta": question,
+                    "respuesta": "Para TM en semestres 1 y 3 hay grupos A y B. ¿Cuál es tu grupo? (A o B)",
+                    "contexto_usado": False,
+                    "came_from": "ask-group-needed-inline",
+                    "citation": "",
+                    "source_chunks": [],
+                    "followup": "",
+                    "attachments": [],
+                }
+            # Prioriza parámetros explícitos sobre "mi horario" si se pudieron extraer
+            if prog and sem and shift:
+                hit = find_schedule_image_by_params(prog, sem, shift, group=group)
+                if hit and hit.get("url"):
+                    return {
+                        "pregunta": question,
+                        "respuesta": "Aquí tienes el horario.",
+                        "contexto_usado": True,
+                        "came_from": "asset-schedule-params-inline",
+                        "citation": "",
+                        "source_chunks": [],
+                        "followup": "",
+                        "attachments": [hit.get("url")],
+                    }
+                from app.services.schedule_service import schedule_text_by_params
+                txt = schedule_text_by_params(prog, sem, shift, group=group)
+                if txt:
+                    return {
+                        "pregunta": question,
+                        "respuesta": txt,
+                        "contexto_usado": True,
+                        "came_from": "schedule-by-params-inline",
+                        "citation": "",
+                        "source_chunks": [],
+                        "followup": "",
+                        "attachments": [],
+                    }
+            else:
+                # Falta información → preguntar por los campos faltantes
+                need = []
+                if not prog:
+                    need.append("carrera (ej. IDS)")
+                if not sem:
+                    need.append("semestre (1–12)")
+                if sem in {1,3} and shift == "TM":
+                    need.append("grupo (A o B)")
+                if not shift:
+                    need.append("turno (TM o TV)")
+                if need:
+                    return {
+                        "pregunta": question,
+                        "respuesta": "¿Podrías decirme " + " y ".join(need) + "?",
+                        "contexto_usado": False,
+                        "came_from": "ask-schedule-missing-inline",
                         "citation": "",
                         "source_chunks": [],
                         "followup": "",
@@ -671,8 +886,8 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
     # C2) "dame mi horario" → intenta adjuntar imagen del horario vigente
     try:
         qlow = (question or "").lower()
-        # Caso: el usuario dijo solo "dame la imagen" y previamente mostramos el horario en texto
-        if any(w in qlow for w in ["dame la imagen", "la imagen", "imagen", "foto"]) and "horario" not in qlow:
+        # Caso: el usuario pide "la imagen" (con o sin decir "horario") y previamente mostramos el horario en texto
+        if any(w in qlow for w in ["dame la imagen", "la imagen", "imagen", "foto"]):
             last_text = ""
             try:
                 if history:
@@ -688,7 +903,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 title = m.group(1).strip() if m else ""
                 hit = find_schedule_image_by_title(title)
                 if hit and hit.get("url"):
-                    return {"pregunta": question, "respuesta": "Aquí tienes tu horario.", "contexto_usado": True, "came_from": "asset-schedule-title", "citation": "", "source_chunks": [], "followup": "", "attachments": [hit.get("url")]}
+                    return {"pregunta": question, "respuesta": "Aquí tienes tu horario.", "contexto_usado": True, "came_from": "asset-schedule-title", "citation": "", "source_chunks": [], "followup": "", "attachments": [hit.get("url")]} 
                 # Apología + reutiliza el mismo texto mostrado
                 apology = "Disculpa, no encontré la imagen ahora mismo. Te dejo el horario en texto:"
                 if last_text:
@@ -721,19 +936,8 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                     "followup": "",
                     "attachments": [],
                 }
-            # Mensaje de solicitud: distinguir entre usuario autenticado e invitado
-            if user_email:
-                try:
-                    p = _get_profile(user_email)
-                    missing_keys = _missing_ordered(p)
-                    if missing_keys:
-                        text = ("Para completar tu perfil y mostrar tu horario: " + _prompt_for(missing_keys[0]))
-                    else:
-                        text = "No logré ubicar tu horario vigente. ¿Confirmas carrera/semestre/turno?"
-                except Exception:
-                    text = "Para completar tu perfil y mostrar tu horario: ¿Cuál es tu carrera? (ej. IDS)"
-            else:
-                text = "¿De qué carrera, semestre y turno es el horario que quieres ver?"
+            # Mensaje de solicitud neutral (sin guardar perfil)
+            text = "¿De qué carrera, semestre y turno es el horario que quieres ver? Si es 1º o 3º TM indica grupo A o B."
             return {
                 "pregunta": question,
                 "respuesta": text,
