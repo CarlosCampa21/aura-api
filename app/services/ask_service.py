@@ -96,7 +96,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
         if k == "shift":
             return "¿Cuál es tu turno? (TM matutino o TV vespertino)"
         if k == "semester":
-            return "¿Qué semestre cursas? (número 1–12 o en palabras)"
+            return "¿Qué semestre cursas? (número 1–9 o en palabras)"
         return f"¿Puedes compartir tu {k}?"
     # 0) Confirmación sí/no de una oferta del turno anterior
     if _is_yes_or_no(question):
@@ -219,7 +219,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             t = (s or "").strip().lower()
             if not t:
                 return False
-            if t in {"tm","tv","mt","vt","mañana","manana","tarde","matutino","vespertino"}:
+            if t in {"tm","tv","mt","vt","mañana","manana","tarde","matutino","vespertino","a","b"}:
                 return True
             import re
             if re.fullmatch(r"\d{1,2}", t):
@@ -246,15 +246,14 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             # Semestre: número o palabra
             words_to_num = {
                 "primero":1,"segundo":2,"tercero":3,"cuarto":4,"quinto":5,"sexto":6,
-                "septimo":7,"séptimo":7,"octavo":8,"noveno":9,"décimo":10,"decimo":10,
-                "once":11,"onceavo":11,"undécimo":11,"doce":12,"doceavo":12,"duodécimo":12,
+                "septimo":7,"séptimo":7,"octavo":8,"noveno":9,
             }
             sem = None
             mnum = re.search(r"\b(\d{1,2})\b", s_all)
             if mnum:
                 try:
                     n = int(mnum.group(1))
-                    if 1 <= n <= 12:
+                    if 1 <= n <= 9:
                         sem = n
                 except Exception:
                     sem = None
@@ -277,6 +276,11 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 m2 = re.search(r"\b(?:1|3)\s*([ab])\b", s_all)
                 if m2:
                     group = m2.group(1).upper()
+                else:
+                    # Acepta 'a' o 'b' como token aislado
+                    m3 = re.search(r"(?i)\b([ab])\b", s_all)
+                    if m3:
+                        group = m3.group(1).upper()
 
             # Si es 1º o 3º en TM y no hay grupo, pedirlo primero
             if prog and sem in {1,3} and shift == "TM" and not group:
@@ -322,7 +326,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             if not prog:
                 needs.append("carrera (ej. IDS)")
             if not sem:
-                needs.append("semestre (1–12)")
+                needs.append("semestre (1–9)")
             if not shift:
                 needs.append("turno (TM o TV)")
             if sem in {1,3} and shift == "TM" and "grupo" not in needs:
@@ -664,8 +668,7 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             # Semestre: número o en palabras
             words_to_num = {
                 "primero":1,"segundo":2,"tercero":3,"cuarto":4,"quinto":5,"sexto":6,
-                "septimo":7,"séptimo":7,"octavo":8,"noveno":9,"décimo":10,"decimo":10,
-                "once":11,"onceavo":11,"undécimo":11,"doce":12,"doceavo":12,"duodécimo":12,
+                "septimo":7,"séptimo":7,"octavo":8,"noveno":9,
             }
             sem = None
             m = re.search(r"\b(\d{1,2})\b", s)
@@ -785,6 +788,10 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 m2 = re.search(r"\b(?:1|3)\s*([ab])\b", qlow)
                 if m2:
                     group = m2.group(1).upper()
+                else:
+                    m3 = re.search(r"(?i)\b([ab])\b", qlow)
+                    if m3:
+                        group = m3.group(1).upper()
             if prog and sem in {1,3} and shift == "TM" and not group:
                 return {
                     "pregunta": question,
@@ -828,8 +835,8 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
                 need = []
                 if not prog:
                     need.append("carrera (ej. IDS)")
-                if not sem:
-                    need.append("semestre (1–12)")
+            if not sem:
+                need.append("semestre (1–9)")
                 if sem in {1,3} and shift == "TM":
                     need.append("grupo (A o B)")
                 if not shift:

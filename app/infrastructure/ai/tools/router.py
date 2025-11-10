@@ -114,7 +114,7 @@ def answer_with_tools(user_email: str, question: str, academic_context: str, his
                     "properties": {
                         "full_name": {"type": "string", "description": "Nombre completo"},
                         "major": {"type": "string", "description": "Carrera/Programa (ej. IDS)"},
-                        "semester": {"type": "integer", "description": "Semestre (1-12)"},
+                        "semester": {"type": "integer", "description": "Semestre (1-9)"},
                         "shift": {"type": "string", "description": "Turno (TM/TV)"},
                         "group": {"type": "string", "description": "Grupo (opcional)"},
                         "tz": {"type": "string", "description": "Zona horaria IANA (opcional)"},

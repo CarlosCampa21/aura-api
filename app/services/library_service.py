@@ -309,22 +309,58 @@ def find_schedule_image_by_params(program: str, semester: int | str, shift: str 
 
         queries: List[str] = []
         for sh_alias in shift_aliases(sh) or [""]:
-            base_parts = [prog, sem, sh_alias, per]
+            # Partes base
+            sem_str = str(sem)
+            base_core = [prog, sem_str, sh_alias, per]
+            base = " ".join([p for p in base_core if p])
+            # Variantes de grupo
+            grp_variants: List[str] = []
             if grp:
-                base_parts.append(f"GRUPO {grp}")
-            base = " ".join([p for p in base_parts if p])
-            queries.extend([
-                " ".join([p for p in ["horario", base] if p]),
-                base,
-                # variantes con 'imagen horario' al frente
-                " ".join([p for p in ["imagen", "horario", base] if p]),
-            ])
+                letter = grp[0].upper()
+                grp_variants = [
+                    f"GRUPO {letter}",   # "GRUPO A"
+                    f"{sem_str}{letter}",# "1A" o "3B"
+                    letter,               # "A" (menos específica)
+                ]
+            # Construye consultas combinando variantes con y sin grupo (prioriza con grupo)
+            bases_to_try: List[str] = []
+            for gv in grp_variants:
+                b_with = " ".join([p for p in [prog, sem_str, gv, sh_alias, per] if p])
+                if b_with:
+                    bases_to_try.append(b_with)
+            bases_to_try.append(base)
+            # Genera queries para cada base
+            for b in bases_to_try:
+                for prefix in ("horario", None, "imagen horario"):
+                    q = " ".join([p for p in ([prefix, b] if prefix else [b]) if p])
+                    if q and q not in queries:
+                        queries.append(q)
         for q in queries:
             if not q.strip():
                 continue
             items = search_assets(q, limit=10)
             imgs = [i for i in items if (i.get("file_url") and str(i.get("mime_type","" )).lower().startswith("image/"))]
             if imgs:
+                # Si se especificó grupo, prioriza coincidencias explícitas por título o tags
+                if grp:
+                    g = (grp or "").strip().upper()
+                    pat1 = f"grupo {g}".lower()
+                    pat2 = f"{sem_str}{g}".lower()
+                    def score(it: Dict[str, str]) -> int:
+                        s = 0
+                        title = (it.get("title") or "").lower()
+                        tags = [str(t).lower() for t in (it.get("tags") or [])]
+                        if pat1 in title:
+                            s += 3
+                        if pat2 in title:
+                            s += 2
+                        if g.lower() in tags:
+                            s += 2
+                        # bonus por incluir todas las piezas clave
+                        if prog.lower() in title and sem_str in title and (sh_alias or "").lower() in title:
+                            s += 1
+                        return s
+                    imgs = sorted(imgs, key=score, reverse=True)
                 return {"title": imgs[0].get("title") or "", "url": imgs[0].get("file_url")}
         return None
     except Exception:
@@ -353,7 +389,7 @@ def find_schedule_image_by_title(title: str) -> Optional[Dict[str, str]]:
         m_prog = re.search(r"\b([A-Za-z]{2,8})\b", raw)
         if m_prog:
             prog = m_prog.group(1).upper()
-        # Semestre: primer número 1-12
+        # Semestre: primer número 1-9
         m_sem = re.search(r"\b(\d{1,2})\b", raw)
         if m_sem:
             try:

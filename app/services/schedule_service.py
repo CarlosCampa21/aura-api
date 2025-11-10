@@ -246,8 +246,7 @@ def try_answer_schedule(email: str, question: str) -> Optional[str]:
     # Verifica perfil mínimo
     prof = _get_user_profile(email) or {}
     missing: list[str] = []
-    if not (prof.get("full_name")):
-        missing.append("nombre completo")
+    # Ya no pedimos nombre para responder el horario
     if not (prof.get("major")):
         missing.append("carrera")
     if not (prof.get("shift")):
