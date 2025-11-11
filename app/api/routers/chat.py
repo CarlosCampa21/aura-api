@@ -11,6 +11,7 @@ from app.api.schemas.chat import (
     MessageOut,
     ChatAskPayload,
     ChatAskOut,
+    ConversationUpdate,
 )
 from app.repositories.conversations_repo import (
     insert_conversation,
@@ -216,6 +217,40 @@ def delete_conversation_route(conversation_id: str, request: Request, hard: bool
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo eliminar la conversación: {e}")
+
+
+@router.patch(
+    "/conversations/{conversation_id}",
+    response_model=dict,
+    summary="Actualizar conversación",
+    description="Actualiza metadatos de una conversación (p.ej., title). Requiere pertenencia por user_id o session_id.",
+)
+def patch_conversation(conversation_id: str, payload: ConversationUpdate, request: Request, x_session_id: Optional[str] = Header(default=None)):
+    try:
+        conv = repo_get_conversation(conversation_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+        # Autorización similar al delete: usuario o sesión invitado
+        user_id = conv.get("user_id")
+        if user_id:
+            auth_header = request.headers.get("authorization")
+            current = get_current_user(authorization=auth_header)
+            if str(current.get("_id")) != str(user_id):
+                raise HTTPException(status_code=403, detail="No autorizado para actualizar esta conversación")
+        else:
+            if str(conv.get("session_id") or "") != str(x_session_id or ""):
+                raise HTTPException(status_code=403, detail="No autorizado (sesión inválida)")
+
+        updates = payload.model_dump(exclude_none=True)
+        if not updates:
+            return {"message": "ok", "updated": False}
+        repo_update_conversation(conversation_id, updates)
+        return {"message": "ok", "updated": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo actualizar la conversación: {e}")
 
 
 @router.post(

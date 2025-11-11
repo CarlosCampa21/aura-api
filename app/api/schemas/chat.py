@@ -43,6 +43,16 @@ class ConversationOut(BaseModel):
     created_at: str
     updated_at: str
 
+
+class ConversationUpdate(BaseModel):
+    """Actualizar metadatos de una conversación (parcial)."""
+
+    title: Optional[str] = None
+    status: Optional[Literal["active", "archived"]] = None
+    settings: Optional[Dict] = None
+    metadata: Optional[Dict] = None
+    last_message_at: Optional[str] = None
+
 class MessageCreate(BaseModel):
     """Crear un mensaje dentro de una conversación."""
 
@@ -92,4 +102,3 @@ class ChatAskOut(BaseModel):
     assistant_message: MessageOut
     model: Optional[str] = None
     session_id: Optional[str] = None
-
