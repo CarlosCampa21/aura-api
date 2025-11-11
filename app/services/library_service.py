@@ -205,6 +205,61 @@ def find_campus_map_image_url() -> Optional[Dict[str, str]]:
     return None
 
 
+def find_semana_sistemas_program_image() -> Optional[Dict[str, str]]:
+    """Localiza la imagen del Programa de Actividades de la Semana de Sistemas.
+
+    Heurística: consulta `library_asset` priorizando `image/*` y palabras clave
+    típicas: "semana de sistemas", "programa", "agenda". Si hay múltiples
+    coincidencias, prioriza aquellas con tags que contengan
+    "semana-de-sistemas" y/o "programa".
+    Devuelve {title,url} o None.
+    """
+    try:
+        keywords = [
+            "programa semana de sistemas",
+            "programa de actividades semana de sistemas",
+            "agenda semana de sistemas",
+            "semana de sistemas",
+        ]
+        from typing import List, Dict
+
+        def rank(it: Dict[str, str]) -> int:
+            title = (it.get("title") or "").lower()
+            tags = [str(t).lower() for t in (it.get("tags") or [])]
+            score = 0
+            if it.get("file_url") and str(it.get("mime_type", "")).lower().startswith("image/"):
+                score += 10
+            if "semana-de-sistemas" in tags:
+                score += 5
+            if "programa" in tags or "agenda" in tags:
+                score += 3
+            if "semana" in title and "sistemas" in title:
+                score += 2
+            if "programa" in title or "agenda" in title:
+                score += 1
+            return score
+
+        best: Dict[str, str] | None = None
+        from app.repositories.library_asset_repo import search_assets
+        for q in keywords:
+            items: List[Dict[str, str]] = search_assets(q, limit=10)
+            if not items:
+                continue
+            # Mantén solo elementos con URL
+            items = [i for i in items if i.get("file_url")]
+            if not items:
+                continue
+            items = sorted(items, key=rank, reverse=True)
+            cand = items[0]
+            if not best or rank(cand) > rank(best):
+                best = cand
+        if best and best.get("file_url"):
+            return {"title": best.get("title") or "Programa de Actividades — Semana de Sistemas", "url": best.get("file_url")}
+        return None
+    except Exception:
+        return None
+
+
 def _normalize_building(s: str | None) -> str:
     """Normaliza nombres de edificio a slugs cortos usados como tags.
 

@@ -156,6 +156,7 @@ def main() -> None:
     ap.add_argument("--shift", choices=["TM", "TV"], required=False)
     ap.add_argument("--title", default=None)
     ap.add_argument("--notes", default=None)
+    ap.add_argument("--version", type=int, default=1, help="Versión del horario (útil para módulos). Por defecto 1")
     ap.add_argument("--publish", action="store_true", help="Marcar como vigente y desmarcar otros de la misma combinación")
     args = ap.parse_args()
 
@@ -183,6 +184,7 @@ def main() -> None:
         "group": str(args.group),
         "period_code": args.period,
         "shift": args.shift,
+        "version": int(args.version),
         "title": args.title or f"{args.program} {args.semester} {args.shift or ''} Grupo {args.group} {args.period}".strip(),
         "notes": args.notes,
     }
@@ -193,6 +195,7 @@ def main() -> None:
         "semester": combo["semester"],
         "group": combo["group"],
         "period_code": combo["period_code"],
+        "version": combo["version"],
         **({"shift": combo["shift"]} if combo.get("shift") else {}),
     })
     if existing:
@@ -212,4 +215,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

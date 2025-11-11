@@ -498,6 +498,35 @@ def ask(user_email: str, question: str, history: list[dict] | None = None) -> di
             "attachments": [],
         }
 
+    # C0-bis-2) Programa de la Semana de Sistemas → adjuntar imagen si existe
+    if _is_semana_sistemas_program_request(question):
+        try:
+            from app.services.library_service import find_semana_sistemas_program_image
+            hit = find_semana_sistemas_program_image()
+        except Exception:
+            hit = None
+        if hit and hit.get("url"):
+            return {
+                "pregunta": question,
+                "respuesta": "Aquí está el programa de actividades de la Semana de Sistemas.",
+                "contexto_usado": True,
+                "came_from": "semana-sistemas-program",
+                "citation": "",
+                "source_chunks": [],
+                "followup": "",
+                "attachments": [hit.get("url")],
+            }
+        return {
+            "pregunta": question,
+            "respuesta": "No encontré ahora mismo el programa de actividades de la Semana de Sistemas.",
+            "contexto_usado": False,
+            "came_from": "semana-sistemas-program-miss",
+            "citation": "",
+            "source_chunks": [],
+            "followup": "¿Quieres que intente con otra palabra clave?",
+            "attachments": [],
+        }
+
     # C0-ter) Petición de foto del salón/aula → buscar en assets por tags
     try:
         room = _parse_room_request(question)
@@ -1161,6 +1190,16 @@ def _is_campus_map_request(q: str | None) -> bool:
     s = (q or "").strip()
     return bool(s and _CAMPUS_MAP_REQ_RE.search(s))
 
+# --- Programa de la Semana de Sistemas (imagen) ---
+_SEMANA_SIST_PROGRAM_RE = re.compile(
+    r"(?i)(?:programa|agenda|imagen)\b.*semana\s+de\s+sistemas|semana\s+de\s+sistemas.*\b(?:programa|agenda|imagen)\b"
+)
+
+
+def _is_semana_sistemas_program_request(q: str | None) -> bool:
+    s = (q or "").strip()
+    return bool(s and _SEMANA_SIST_PROGRAM_RE.search(s))
+
 # --- Petición de foto de salón/aula ---
 _ROOM_REQ_RE = re.compile(
     r"(\b(?:sal[oó]n|salon|aula|laboratorio|lab)\b|\b(?:foto|imagen)\b.*\b(?:servidores|server\s*room|centro\s*de\s*datos|redes)\b)",
@@ -1393,7 +1432,7 @@ def _is_calendar_request(q: str | None) -> bool:
 
 # --- Detección de solicitud de documento/plantilla ---
 _DOC_REQ_RE = re.compile(
-    r"(?i)\b(formato|plantilla|documento|archivo|pdf|word|docx|doc|carta|solicitud|reporte|informe|constancia)\b"
+    r"(?i)\b(formato|plantilla|documento|archivo|pdf|word|docx|doc|carta|solicitud|reporte|informe|constancia|imagen|foto)\b"
 )
 
 
